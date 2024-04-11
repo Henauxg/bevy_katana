@@ -9,7 +9,7 @@ edition = "2021"
 bevy_ghx_utils = { git = "https://github.com/Henauxg/bevy_ghx_utils.git", rev = "70e1f17", version = "0.3.0-dev", default-features = true }
 
 # External dependencies
-bevy = { version = "0.13", default-features = true, features = [
+bevy = { version = "0.13", default-features = false, features = [
     # Default features:
 
     "bevy_core_pipeline", # Common rendering abstractions
@@ -44,6 +44,8 @@ bevy_rapier3d = { version = "0.25.0", features = [
     "simd-stable",
     "debug-render-3d",
 ] }
+bevy_egui = "0.26"
+bevy-inspector-egui = "0.23"
 
 
 [[example]]
