@@ -1,5 +1,4 @@
-//! Loads and renders a glTF file as a scene.
-
+use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_rapier3d::prelude::*;
 use std::f32::consts::*;
 
@@ -14,9 +13,11 @@ fn main() {
             color: Color::WHITE,
             brightness: 1.0 / 5.0f32,
         })
+        .insert_resource(Time::<Fixed>::from_seconds(10.5))
         .add_plugins(DefaultPlugins)
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
-        .add_plugins(RapierDebugRenderPlugin::default())
+        // .add_plugins(RapierDebugRenderPlugin::default())
+        .add_plugins(WorldInspectorPlugin::new())
         .add_systems(Startup, (setup_camera, setup_scene))
         .add_systems(
             Update,
@@ -25,14 +26,16 @@ fn main() {
                 update_pan_orbit_camera,
             ),
         )
-        .add_systems(Update, attach_physics_components_to_cells)
-        // .add_systems(FixedUpdate, change_object)
+        .add_systems(
+            Update,
+            (respawn_cube, attach_physics_components_to_cells).chain(),
+        )
         .run();
 }
 
 pub fn setup_camera(mut commands: Commands) {
     // Camera
-    let camera_position = Vec3::new(0., 1.5, 2.5);
+    let camera_position = Vec3::new(0., 4.5, 7.5);
     let look_target = Vec3::ZERO;
     commands.spawn((
         Camera3dBundle {
@@ -48,11 +51,11 @@ pub fn setup_camera(mut commands: Commands) {
 }
 
 #[derive(Component, Debug)]
-struct FragmentsRoot {
+struct FragmentedCubeRoot {
     physics_applied: bool,
 }
 
-impl Default for FragmentsRoot {
+impl Default for FragmentedCubeRoot {
     fn default() -> Self {
         Self {
             physics_applied: false,
@@ -61,7 +64,7 @@ impl Default for FragmentsRoot {
 }
 
 #[derive(Component)]
-struct Full;
+struct FullCubeRoot;
 
 fn setup_scene(
     mut commands: Commands,
@@ -70,17 +73,19 @@ fn setup_scene(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // // Plane
+    let radius = 2000.;
+    let height = 200.;
     commands.spawn((
         PbrBundle {
-            mesh: meshes.add(Cylinder::new(20.0, 0.1)),
+            mesh: meshes.add(Cylinder::new(radius, height)),
             material: materials.add(Color::WHITE),
             // transform: Transform::from_rotation(Quat::from_rotation_x(
             //     -std::f32::consts::FRAC_PI_2,
             // )),
-            transform: Transform::from_xyz(0.0, 0.0, 0.0),
+            transform: Transform::from_xyz(0.0, -height / 2., 0.0),
             ..default()
         },
-        Collider::cylinder(0.1, 20.0),
+        Collider::cylinder(height / 2., radius),
         (ActiveCollisionTypes::default()),
         // Sensor,
         // TransformBundle::from(Transform::from_xyz(0.0, 0.0, 0.0)),
@@ -107,24 +112,27 @@ fn setup_scene(
     commands.spawn((
         SceneBundle {
             scene: asset_server.load("cube_frac.glb#Scene0"),
-            transform: Transform::from_xyz(0., 2., 0.),
+            transform: Transform::from_xyz(0., 3., 0.),
             ..default()
         },
-        FragmentsRoot {
+        FragmentedCubeRoot {
             physics_applied: false,
         },
     ));
 }
 
-fn change_object(
+fn respawn_cube(
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    query_fractured: Query<Entity, With<FragmentsRoot>>,
-    query_full: Query<Entity, With<Full>>,
+    query_fractured: Query<Entity, With<FragmentedCubeRoot>>,
+    query_full: Query<Entity, With<FullCubeRoot>>,
     asset_server: Res<AssetServer>,
     mut commands: Commands,
 ) {
     if keyboard_input.pressed(KeyCode::KeyF) {
         for entity in query_fractured.iter() {
+            commands.entity(entity).despawn_recursive();
+        }
+        for entity in query_full.iter() {
             commands.entity(entity).despawn_recursive();
         }
         commands.spawn((
@@ -133,10 +141,13 @@ fn change_object(
                 transform: Transform::from_xyz(0., 2., 0.),
                 ..default()
             },
-            Full,
+            FullCubeRoot,
         ));
     }
     if keyboard_input.pressed(KeyCode::KeyG) {
+        for entity in query_fractured.iter() {
+            commands.entity(entity).despawn_recursive();
+        }
         for entity in query_full.iter() {
             commands.entity(entity).despawn_recursive();
         }
@@ -146,31 +157,37 @@ fn change_object(
                 transform: Transform::from_xyz(0., 2., 0.),
                 ..default()
             },
-            FragmentsRoot::default(),
+            FragmentedCubeRoot::default(),
         ));
     }
 }
 
 fn attach_physics_components_to_cells(
     mut commands: Commands,
-    mut fractured_scene: Query<(Entity, &mut FragmentsRoot)>,
+    mut fractured_scene: Query<(Entity, &mut FragmentedCubeRoot)>,
     children: Query<&Children>,
+    mut meshes_handles: Query<&Handle<Mesh>>,
+    mut meshes: ResMut<Assets<Mesh>>,
 ) {
     for (fractured_scene_entity, mut fragments_root) in fractured_scene.iter_mut() {
         if !fragments_root.physics_applied {
             for entity in children.iter_descendants(fractured_scene_entity) {
-                info!("Attaching physics components to entoty {:?}", entity);
-                commands.entity(entity).insert((
-                    RigidBody::Dynamic,
-                    Collider::ball(0.2),
-                    ActiveCollisionTypes::default(),
-                    Friction::coefficient(0.7),
-                    Restitution::coefficient(0.3),
-                    ColliderMassProperties::Density(2.0),
-                    ExternalForce::default(),
-                    ExternalImpulse::default(),
-                ));
-                fragments_root.physics_applied = true;
+                if let Ok(mesh_handle) = meshes_handles.get(entity) {
+                    let mesh = meshes.get(mesh_handle).unwrap();
+                    info!("Attaching physics components to entity {:?}", entity);
+                    let collider =
+                        Collider::from_bevy_mesh(mesh, &ComputedColliderShape::ConvexHull).unwrap();
+                    commands.entity(entity).insert((
+                        RigidBody::Dynamic,
+                        // Collider::cuboid(0.2, 0.2, 0.2),
+                        collider,
+                        ActiveCollisionTypes::default(),
+                        Friction::coefficient(0.7),
+                        Restitution::coefficient(0.05),
+                        ColliderMassProperties::Density(2.0),
+                    ));
+                    fragments_root.physics_applied = true;
+                }
             }
         }
     }
