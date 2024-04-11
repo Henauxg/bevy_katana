@@ -40,6 +40,11 @@ bevy = { version = "0.13", default-features = true, features = [
 bevy_gltf = { version = "0.13", default-features = false }
 tritet = "0.4.0"
 simple_delaunay_lib = "0.2.0"
+bevy_rapier3d = { version = "0.25.0", features = [
+    "simd-stable",
+    "debug-render-3d",
+] }
+
 
 [[example]]
 name = "sandbox"
