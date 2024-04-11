@@ -1,48 +1,28 @@
-use std::f32::consts::PI;
+//! Loads and renders a glTF file as a scene.
+
+use std::f32::consts::*;
 
 use bevy::{
-    app::{App, Startup, Update},
-    asset::Assets,
-    core_pipeline::core_3d::Camera3dBundle,
-    ecs::{
-        schedule::IntoSystemConfigs,
-        system::{Commands, ResMut},
-    },
-    input::{common_conditions::input_just_pressed, keyboard::KeyCode},
-    math::{primitives::Plane3d, EulerRot, Quat, Vec3},
-    pbr::{
-        AmbientLight, CascadeShadowConfigBuilder, DirectionalLight, DirectionalLightBundle,
-        PbrBundle, StandardMaterial,
-    },
-    render::{
-        color::Color,
-        mesh::{Mesh, Meshable},
-    },
-    transform::components::Transform,
-    utils::default,
-    DefaultPlugins,
+    input::common_conditions::input_just_pressed, pbr::CascadeShadowConfigBuilder, prelude::*,
 };
 use bevy_ghx_utils::camera::{toggle_auto_orbit, update_pan_orbit_camera, PanOrbitCamera};
 
 fn main() {
-    let mut app = App::new();
-
-    app.insert_resource(AmbientLight {
-        color: Color::WHITE,
-        brightness: 2000.,
-    })
-    .add_plugins(DefaultPlugins);
-
-    app.add_systems(Startup, (setup_camera, setup_sandbox));
-    app.add_systems(
-        Update,
-        (
-            toggle_auto_orbit.run_if(input_just_pressed(KeyCode::F5)),
-            update_pan_orbit_camera,
-        ),
-    );
-
-    app.run();
+    App::new()
+        .insert_resource(AmbientLight {
+            color: Color::WHITE,
+            brightness: 1.0 / 5.0f32,
+        })
+        .add_plugins(DefaultPlugins)
+        .add_systems(Startup, (setup_camera, setup_scene))
+        .add_systems(
+            Update,
+            (
+                toggle_auto_orbit.run_if(input_just_pressed(KeyCode::F5)),
+                update_pan_orbit_camera,
+            ),
+        )
+        .run();
 }
 
 pub fn setup_camera(mut commands: Commands) {
@@ -62,15 +42,15 @@ pub fn setup_camera(mut commands: Commands) {
     ));
 }
 
-pub fn setup_sandbox(
+fn setup_scene(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // // Plane
     commands.spawn(PbrBundle {
         mesh: meshes.add(Plane3d::default().mesh().size(500000.0, 500000.0)),
-        transform: Transform::from_xyz(0.0, -0.5, 0.0),
         material: materials.add(Color::rgb(0.3, 0.5, 0.3)),
         ..default()
     });
@@ -88,6 +68,12 @@ pub fn setup_sandbox(
             ..default()
         }
         .into(),
+        ..default()
+    });
+
+    commands.spawn(SceneBundle {
+        scene: asset_server.load("cube.glb#Scene0"),
+        transform: Transform::from_xyz(0., 2., 0.),
         ..default()
     });
 }
