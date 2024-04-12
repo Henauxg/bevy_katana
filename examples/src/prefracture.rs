@@ -7,6 +7,9 @@ use bevy::{
 };
 use bevy_ghx_utils::camera::{toggle_auto_orbit, update_pan_orbit_camera, PanOrbitCamera};
 
+pub const CUBE_FRAC_ASSET_PATH: &str = "cube_frac.glb#Scene0";
+pub const CUBE_ASSET_PATH: &str = "cube.glb#Scene0";
+
 fn main() {
     App::new()
         .insert_resource(AmbientLight {
@@ -64,7 +67,7 @@ impl Default for FragmentedCubeRoot {
 }
 
 #[derive(Component)]
-struct FullCubeRoot;
+struct ExampleCube;
 
 fn setup_scene(
     mut commands: Commands,
@@ -79,16 +82,11 @@ fn setup_scene(
         PbrBundle {
             mesh: meshes.add(Cylinder::new(radius, height)),
             material: materials.add(Color::WHITE),
-            // transform: Transform::from_rotation(Quat::from_rotation_x(
-            //     -std::f32::consts::FRAC_PI_2,
-            // )),
             transform: Transform::from_xyz(0.0, -height / 2., 0.0),
             ..default()
         },
         Collider::cylinder(height / 2., radius),
         (ActiveCollisionTypes::default()),
-        // Sensor,
-        // TransformBundle::from(Transform::from_xyz(0.0, 0.0, 0.0)),
         Friction::coefficient(0.7),
         Restitution::coefficient(0.3),
     ));
@@ -109,56 +107,49 @@ fn setup_scene(
         ..default()
     });
 
+    spawn_frac_cube(&asset_server, &mut commands);
+}
+
+fn spawn_cube(asset_server: &Res<AssetServer>, commands: &mut Commands) {
     commands.spawn((
         SceneBundle {
-            scene: asset_server.load("cube_frac.glb#Scene0"),
-            transform: Transform::from_xyz(0., 3., 0.),
+            scene: asset_server.load(CUBE_ASSET_PATH),
+            transform: Transform::from_xyz(0., 2., 0.),
             ..default()
         },
-        FragmentedCubeRoot {
-            physics_applied: false,
+        ExampleCube,
+    ));
+}
+
+fn spawn_frac_cube(asset_server: &Res<AssetServer>, commands: &mut Commands) {
+    commands.spawn((
+        SceneBundle {
+            scene: asset_server.load(CUBE_FRAC_ASSET_PATH),
+            transform: Transform::from_xyz(0., 2., 0.),
+            ..default()
         },
+        FragmentedCubeRoot::default(),
+        ExampleCube,
     ));
 }
 
 fn respawn_cube(
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    query_fractured: Query<Entity, With<FragmentedCubeRoot>>,
-    query_full: Query<Entity, With<FullCubeRoot>>,
+    query_cubes: Query<Entity, With<ExampleCube>>,
     asset_server: Res<AssetServer>,
     mut commands: Commands,
 ) {
     if keyboard_input.pressed(KeyCode::KeyF) {
-        for entity in query_fractured.iter() {
+        for entity in query_cubes.iter() {
             commands.entity(entity).despawn_recursive();
         }
-        for entity in query_full.iter() {
-            commands.entity(entity).despawn_recursive();
-        }
-        commands.spawn((
-            SceneBundle {
-                scene: asset_server.load("cube.glb#Scene0"),
-                transform: Transform::from_xyz(0., 2., 0.),
-                ..default()
-            },
-            FullCubeRoot,
-        ));
+        spawn_cube(&asset_server, &mut commands);
     }
     if keyboard_input.pressed(KeyCode::KeyG) {
-        for entity in query_fractured.iter() {
+        for entity in query_cubes.iter() {
             commands.entity(entity).despawn_recursive();
         }
-        for entity in query_full.iter() {
-            commands.entity(entity).despawn_recursive();
-        }
-        commands.spawn((
-            SceneBundle {
-                scene: asset_server.load("cube_frac.glb#Scene0"),
-                transform: Transform::from_xyz(0., 2., 0.),
-                ..default()
-            },
-            FragmentedCubeRoot::default(),
-        ));
+        spawn_frac_cube(&asset_server, &mut commands);
     }
 }
 
@@ -166,12 +157,14 @@ fn attach_physics_components_to_cells(
     mut commands: Commands,
     mut fractured_scene: Query<(Entity, &mut FragmentedCubeRoot)>,
     children: Query<&Children>,
-    mut meshes_handles: Query<&Handle<Mesh>>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    meshes_handles: Query<&Handle<Mesh>>,
+    meshes: ResMut<Assets<Mesh>>,
 ) {
     for (fractured_scene_entity, mut fragments_root) in fractured_scene.iter_mut() {
+        // We only want to attach the physics components once
         if !fragments_root.physics_applied {
             for entity in children.iter_descendants(fractured_scene_entity) {
+                // Attach the physics components only to the meshes entities
                 if let Ok(mesh_handle) = meshes_handles.get(entity) {
                     let mesh = meshes.get(mesh_handle).unwrap();
                     info!("Attaching physics components to entity {:?}", entity);
@@ -179,13 +172,13 @@ fn attach_physics_components_to_cells(
                         Collider::from_bevy_mesh(mesh, &ComputedColliderShape::ConvexHull).unwrap();
                     commands.entity(entity).insert((
                         RigidBody::Dynamic,
-                        // Collider::cuboid(0.2, 0.2, 0.2),
                         collider,
                         ActiveCollisionTypes::default(),
                         Friction::coefficient(0.7),
                         Restitution::coefficient(0.05),
                         ColliderMassProperties::Density(2.0),
                     ));
+                    // Children do not seem to be created at the same time as the cube root entity, so we only update the flag once children are present
                     fragments_root.physics_applied = true;
                 }
             }
