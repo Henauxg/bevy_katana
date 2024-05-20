@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# Internal dependencies
+ghx_constrained_delaunay = { path = "../ghx_constrained_delaunay", version = "0.1.0" }
+
 # External dependencies
 bevy = { version = "0.13.0", default-features = false, features = [] }
 rand = "0.8.5"

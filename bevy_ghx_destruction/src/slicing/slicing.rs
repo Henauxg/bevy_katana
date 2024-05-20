@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bevy_rapier3d::{na::ComplexField, prelude::*};
+use bevy_rapier3d::prelude::*;
 
 use bevy::{
     math::Vec3A,
@@ -13,10 +13,8 @@ use bevy::{
 };
 use ordered_float::OrderedFloat;
 
-use crate::{
-    triangulation::{Edge, VertexId},
-    utils::{get_random_normalized_vec, is_point_on_right_side_of_edge},
-};
+use crate::utils::get_random_normalized_vec;
+use ghx_constrained_delaunay::types::{Edge, VertexId};
 
 use super::mesh_mapping::MeshMapping;
 

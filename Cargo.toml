@@ -2,8 +2,9 @@
 resolver = "2"
 
 members = [
-	"bevy_ghx_destruction", # Bevy plugin
-	"examples",             # Bevy plugin examples
+	"bevy_ghx_destruction",     # Bevy plugin
+	"examples",                 # Bevy plugin examples
+	"ghx_constrained_delaunay", # Constrained Delaunay tiangulation
 ]
 
 # Enable a small amount of optimization in debug mode

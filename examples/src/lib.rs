@@ -1,7 +1,6 @@
 use bevy::render::color::Color;
 
 pub mod ball;
-pub mod debug_utils;
 pub mod fps;
 pub mod plugin;
 

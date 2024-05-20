@@ -12,29 +12,6 @@ A Rust library for 3D dynamic destruction of meshes for the [`Bevy`](https://git
 
 # Examples
 
-<details>
-  <summary>Sandbox</summary>
-
-```
-cargo run --example sandbox
-```
-
-Simple standalone example to test the crate features.
-
-</details>
-
-<details>
-  <summary>Ashbox</summary>
-
-```
-cargo run --example ashbox
-```
-
-Simple standalone example to test the crate features.
-
-</details>
-
-
 # Misc
 
 #### Why "ghx" ?

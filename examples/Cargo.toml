@@ -65,11 +65,3 @@ path = "src/prefracture/prefracture.rs"
 [[example]]
 name = "slicing"
 path = "src/slicing/slicing.rs"
-
-[[example]]
-name = "triangulation"
-path = "src/triangulation/triangulation.rs"
-
-[[example]]
-name = "constrained_triangulation"
-path = "src/triangulation/constrained_triangulation.rs"
