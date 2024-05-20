@@ -9,10 +9,14 @@ use bevy::{
         mesh::{Indices, PrimitiveTopology, VertexAttributeValues},
         render_asset::RenderAssetUsages,
     },
+    utils::hashbrown::HashSet,
 };
 use ordered_float::OrderedFloat;
 
-use crate::{triangulation::VertexId, utils::get_random_normalized_vec};
+use crate::{
+    triangulation::{Edge, VertexId},
+    utils::{get_random_normalized_vec, is_point_on_right_side_of_edge},
+};
 
 use super::mesh_mapping::MeshMapping;
 
@@ -178,7 +182,7 @@ fn split_triangles(
 
     let mut vertices_added: HashMap<[OrderedFloat<f32>; 3], VertexId> = HashMap::new();
 
-    let mut cut_face_vertices: Vec<Vec3A> = Vec::new();
+    let mut cut_face_vertices: HashSet<Edge> = HashSet::new();
 
     for (index, vertex) in vertices.iter().enumerate() {
         let k = [
@@ -318,6 +322,9 @@ fn split_triangles(
     (index_buffer_top_slice, index_buffer_bottom_slice)
 }
 
+fn is_point_left(edge1: Vec3A, edge2: Vec3A, point: Vec3A) -> bool {
+    (edge2.x - edge1.x) * (point.y - edge1.y) - (edge2.y - edge1.y) * (point.x - edge1.x) > 0.
+}
 /// if two edges on top:
 ///  1-----------------2
 ///   |              |
@@ -348,7 +355,7 @@ fn split_small_triangles(
     vertex_indexe_3: usize,
     two_edges_on_top: bool,
     vertices_added: &mut HashMap<[OrderedFloat<f32>; 3], VertexId>,
-    cut_face_vertices: &mut Vec<Vec3A>,
+    cut_face_vertices: &mut HashSet<Edge>,
 ) {
     // vertices of the current triangle crossed by the slice plane
     let v1 = Vec3A::from_array(*vertices.get(vertex_indexe_1).unwrap());
@@ -381,30 +388,32 @@ fn split_small_triangles(
             ];
 
             // create the indices
-            let mut index13 = vertices.len() - 2;
-            let mut index23 = vertices.len() - 1;
+            let index13;
+            let index23;
 
             if !vertices_added.contains_key(&ordered_v13) {
+                index13 = vertices.len();
                 // add the new vertices in the hash map
                 vertices_added.insert(ordered_v13, index13);
 
                 // add the new vertices in the list
                 vertices.push(v13.to_array());
-                cut_face_vertices.push(v13);
             } else {
                 index13 = *vertices_added.get(&ordered_v13).unwrap();
             }
 
             if !vertices_added.contains_key(&ordered_v23) {
+                index23 = vertices.len();
                 // add the new vertices in the hash map
                 vertices_added.insert(ordered_v23, index23);
 
                 // add the new vertices in the list
                 vertices.push(v23.to_array());
-                cut_face_vertices.push(v23);
             } else {
                 index23 = *vertices_added.get(&ordered_v23).unwrap();
             }
+
+            info!("indexes {},{}", index13, index23);
 
             if two_edges_on_top {
                 // add two triangles on top
@@ -420,6 +429,8 @@ fn split_small_triangles(
                 index_buffer_bottom_slice.push(vertex_indexe_3);
                 index_buffer_bottom_slice.push(index13);
                 index_buffer_bottom_slice.push(index23);
+
+                cut_face_vertices.insert(Edge::new(index13, index23));
             } else {
                 // add two triangles bellow
                 index_buffer_bottom_slice.push(vertex_indexe_1);
@@ -434,6 +445,8 @@ fn split_small_triangles(
                 index_buffer_top_slice.push(index13);
                 index_buffer_top_slice.push(index23);
                 index_buffer_top_slice.push(vertex_indexe_3);
+
+                cut_face_vertices.insert(Edge::new(index23, index13));
             }
         }
     }
