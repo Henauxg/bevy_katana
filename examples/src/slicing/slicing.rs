@@ -7,7 +7,9 @@ use bevy::{
     },
 };
 
-use bevy_ghx_destruction::{slicing::slicing::compute_slice, utils::get_random_normalized_vec};
+use bevy_ghx_destruction::{
+    slicing::slicing::compute_slice, types::Plane, utils::get_random_normalized_vec,
+};
 use examples::plugin::ExamplesPlugin;
 
 fn main() {
@@ -26,10 +28,12 @@ fn setup() {
     let mesh_center = mesh.compute_aabb().unwrap().center;
 
     // get random normalized vector for the cut plane
-    let _normal_vec = get_random_normalized_vec();
+    let normal_vec = get_random_normalized_vec();
+
+    let plane = Plane::new(mesh_center, plane_normal);
 
     // vertices of the main mesh
-    let _slice = compute_slice(&mesh_center, &plane_normal, &mesh);
+    let _slice = compute_slice(plane, &mesh);
 }
 
 #[rustfmt::skip]

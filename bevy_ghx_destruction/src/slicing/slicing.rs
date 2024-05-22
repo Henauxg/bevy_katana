@@ -2,374 +2,293 @@ use std::collections::HashMap;
 
 use bevy_rapier3d::prelude::*;
 
-use bevy::{
-    math::Vec3A,
-    prelude::*,
-    render::{
-        mesh::{Indices, PrimitiveTopology, VertexAttributeValues},
-        render_asset::RenderAssetUsages,
-    },
-    utils::hashbrown::HashSet,
-};
+use bevy::{math::Vec3A, prelude::*, utils::hashbrown::HashSet};
 use ordered_float::OrderedFloat;
 
-use crate::utils::get_random_normalized_vec;
-use ghx_constrained_delaunay::types::{Edge, VertexId};
-
-use super::mesh_mapping::MeshMapping;
+use crate::{
+    types::{CutDirection, MeshMapping, Plane},
+    utils::{
+        find_intersection_line_plane, get_random_normalized_vec, is_above_plane, push_triangle,
+        single_index, to_vertex,
+    },
+};
+use ghx_constrained_delaunay::{
+    constrained_triangulation::constrained_triangulation_from_3d_planar_vertices,
+    types::{Edge, VertexId},
+};
 
 /// Operate the slice on a mesh
 pub(crate) fn slice(
     commands: &mut Commands,
-    meshes_assets: &mut ResMut<Assets<Mesh>>,
     mesh: &Mesh,
+    meshes_assets: &mut ResMut<Assets<Mesh>>,
     materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // get mesh center
+    // Mesh center
     let mesh_center = mesh.compute_aabb().unwrap().center;
 
-    // get random normalized vector for the cut plane
+    // Random normalized vector for the cut plane
     let normal_vec = get_random_normalized_vec();
 
+    // Plane from point and normal
+    let plane = Plane::new(mesh_center, normal_vec);
+
     // execute the slice
-    internal_slice(
-        commands,
-        mesh_center,
-        normal_vec,
-        mesh,
-        materials,
-        meshes_assets,
-    )
+    internal_slice(commands, plane, mesh, materials, meshes_assets)
 }
 
 fn internal_slice(
-    mut commands: &mut Commands,
-    origin_point: Vec3A,
-    normal_vec: Vec3A,
-    main_mesh: &Mesh,
+    commands: &mut Commands,
+    plane: Plane,
+    mesh: &Mesh,
     materials: ResMut<Assets<StandardMaterial>>,
     meshes_assets: &mut ResMut<Assets<Mesh>>,
 ) {
-    // get the top and bottom meshes from the slice operation and the respective pos
-    let (top_mesh, bottom_mesh, pos) =
-        compute_slice(&origin_point, &normal_vec, main_mesh).unwrap();
+    // Top and bottom meshes from the slice operation
+    let (top_mesh, bottom_mesh) = compute_slice(plane, mesh);
 
-    // spawn the fragments from the meshes at the pos
-    for mesh in vec![top_mesh, bottom_mesh] {
-        let mesh_handle = meshes_assets.add(mesh.clone());
-        spawn_fragments(&mesh, &mesh_handle, &materials, &mut commands, pos.into());
-    }
+    // Spawn the fragments from the meshes at the pos
+    spawn_fragments(
+        vec![top_mesh, bottom_mesh],
+        plane.origin_point,
+        materials,
+        meshes_assets,
+        commands,
+    );
 }
 
-pub fn compute_slice(
-    origin_point: &Vec3A,
-    normal_vec: &Vec3A,
-    main_mesh: &Mesh,
-) -> Option<(Mesh, Mesh, Vec3A)> {
-    // vertices of the main mesh
-    let Some(VertexAttributeValues::Float32x3(mesh_vertices)) =
-        main_mesh.attribute(Mesh::ATTRIBUTE_POSITION)
-    else {
-        return None;
-    };
+pub fn compute_slice(plane: Plane, mesh: &Mesh) -> (Mesh, Mesh) {
+    // Convert mesh into mesh mapping
+    let mut mesh_mapping = MeshMapping::mesh_mapping_from_mesh(mesh);
 
-    let mut vertices = mesh_vertices.clone();
+    // Split in half the mesh mapping into top and bottom mesh mappings
+    let (top_mesh_mapping, bottom_mesh_mapping) = cut_mesh_mapping(plane, &mut mesh_mapping);
 
-    info!("mesh vertices {:?}", mesh_vertices);
-    info!("normal_vec {:?}", normal_vec);
-    info!("origin_point {:?}", origin_point);
-
-    // Split in half the main mesh into mesh mappings
-    let (top_slice_splited, bottom_slice_splited) =
-        cut_mesh(&origin_point, &normal_vec, &mut vertices, main_mesh);
-
-    // create the top mesh
-    let mut fragment_top = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::MAIN_WORLD,
-    );
-
-    //set vertices
-    fragment_top.insert_attribute(
-        Mesh::ATTRIBUTE_POSITION,
-        MeshMapping::into_vertices(top_slice_splited.get_vertex_buffer()),
-    );
-
-    // //set normals
-    // fragment_top.insert_attribute(Mesh::ATTRIBUTE_NORMAL);
-
-    // //set uv
-    // fragment_top.insert_attribute(Mesh::ATTRIBUTE_UV_0);
-
-    // create the bottom mesh
-    let mut fragment_bottom = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::MAIN_WORLD,
-    );
-
-    //set vertices
-    fragment_bottom.insert_attribute(
-        Mesh::ATTRIBUTE_POSITION,
-        MeshMapping::into_vertices(bottom_slice_splited.get_vertex_buffer()),
-    );
-
-    // //set normals
-    // fragment_top.insert_attribute(Mesh::ATTRIBUTE_NORMAL);
-
-    // //set uv
-    // fragment_top.insert_attribute(Mesh::ATTRIBUTE_UV_0);
-
-    Some((fragment_top, fragment_bottom, *origin_point))
+    (
+        top_mesh_mapping.create_mesh(),
+        bottom_mesh_mapping.create_mesh(),
+    )
 }
 
-fn is_above_plane(point: Vec3A, plane_normal: &Vec3A, plane_point: &Vec3A) -> bool {
-    let vector_to_plane = (point - *plane_point).normalize();
-    let distance = -vector_to_plane.dot(*plane_normal);
-    return distance < 0.;
-}
-
-fn cut_mesh(
-    origin_point: &Vec3A,
-    normal_vec: &Vec3A,
-    vertices: &mut Vec<[f32; 3]>,
-    mesh: &Mesh,
-) -> (MeshMapping, MeshMapping) {
-    // flaf buffer to track the position of the vertices along the slice plane
+fn cut_mesh_mapping(plane: Plane, mesh_mapping: &mut MeshMapping) -> (MeshMapping, MeshMapping) {
+    // Track the position of the vertices along the slice plane
     let mut sides = Vec::new();
 
-    // Get the vertices indexes of the current mesh
-    let mesh_indices = mesh.indices().unwrap();
+    let mapping_clone = mesh_mapping.clone();
 
-    for vertex in &mut *vertices {
-        let vertex_above_plane =
-            is_above_plane(Vec3A::from_array(vertex.clone()), normal_vec, origin_point);
-
-        sides.push(vertex_above_plane);
+    for vertex in mapping_clone.vertex().iter() {
+        sides.push(is_above_plane(*vertex, plane));
     }
 
-    // create the two index buffers for each future meshes
-    let (index_buffer_top_slice, index_buffer_bottom_slice) =
-        split_triangles(vertices, origin_point, normal_vec, mesh_indices, &sides);
+    // Creating the index buffers for the top/bottom mesh mappings
+    let mut top_indexes = Vec::new();
+    let mut bottom_indexes = Vec::new();
+
+    // Split in half the mesh mapping, by spliting into new triangles all triangles intersecting the slice plane
+    let (constrained_edges, cut_face_vertices) = split_triangles(
+        mesh_mapping,
+        plane,
+        &sides,
+        &mut top_indexes,
+        &mut bottom_indexes,
+    );
+
+    info!(
+        "cut_face_vertices {:?}, constrained_edges {:?}",
+        cut_face_vertices, constrained_edges
+    );
+
+    // Fill the cut face
+    fill_cut_face(&plane, &cut_face_vertices, &constrained_edges);
 
     todo!()
 }
 
-trait Indexable {
-    fn at(&self, idx: usize) -> usize;
-}
-
-impl Indexable for Indices {
-    fn at(&self, idx: usize) -> usize {
-        match self {
-            Indices::U16(vec) => vec[idx] as usize,
-            Indices::U32(vec) => vec[idx] as usize,
-        }
-    }
+fn fill_cut_face(
+    plane: &Plane,
+    cut_face_vertices: &Vec<[f32; 3]>,
+    constrained_edges: &HashSet<Edge>,
+) {
+    let triangulate = constrained_triangulation_from_3d_planar_vertices(
+        &cut_face_vertices,
+        plane.normal_vec,
+        &constrained_edges,
+    );
+    info!("triangulate {:?}", triangulate);
 }
 
 fn split_triangles(
-    vertices: &mut Vec<[f32; 3]>,
-    origin_point: &Vec3A,
-    normal_vec: &Vec3A,
-    main_mesh_vertices_index_buffer: &Indices,
-    side: &Vec<bool>,
-) -> (Vec<usize>, Vec<usize>) {
-    // Creating the index buffers for the top/bottom slices
-    let mut index_buffer_top_slice = Vec::new();
-    let mut index_buffer_bottom_slice = Vec::new();
-
+    mesh_mapping: &mut MeshMapping,
+    plane: Plane,
+    side: &Vec<CutDirection>,
+    index_buffer_top_slice: &mut Vec<VertexId>,
+    index_buffer_bottom_slice: &mut Vec<VertexId>,
+) -> (HashSet<Edge>, Vec<[f32; 3]>) {
     let mut vertices_added: HashMap<[OrderedFloat<f32>; 3], VertexId> = HashMap::new();
 
-    let mut cut_face_vertices: HashSet<Edge> = HashSet::new();
+    let mut constrained_edges: HashSet<Edge> = HashSet::new();
 
-    for (index, vertex) in vertices.iter().enumerate() {
-        let k = [
+    let mut cut_face_vertices_id: Vec<VertexId> = Vec::new();
+
+    for (index, vertex) in mesh_mapping.vertex().iter().enumerate() {
+        let key = [
             OrderedFloat(vertex[0]),
             OrderedFloat(vertex[1]),
             OrderedFloat(vertex[2]),
         ];
 
-        let v = main_mesh_vertices_index_buffer.at(index);
-        vertices_added.insert(k, v);
+        let value = mesh_mapping.index()[index];
+        vertices_added.insert(key, value);
     }
 
-    for index in (0..main_mesh_vertices_index_buffer.len()).step_by(3) {
-        let vertex_indexe_1 = main_mesh_vertices_index_buffer.at(index);
-        let vertex_indexe_2 = main_mesh_vertices_index_buffer.at(index + 1);
-        let vertex_indexe_3 = main_mesh_vertices_index_buffer.at(index + 2);
+    for index in (0..mesh_mapping.index().len()).step_by(3) {
+        let vertex_indexe_1 = mesh_mapping.index()[index];
+        let vertex_indexe_2 = mesh_mapping.index()[index + 1];
+        let vertex_indexe_3 = mesh_mapping.index()[index + 2];
 
         // if triangle is completely above plane
-        if side[vertex_indexe_1] && side[vertex_indexe_2] && side[vertex_indexe_3] {
-            index_buffer_top_slice.push(vertex_indexe_1);
-            index_buffer_top_slice.push(vertex_indexe_2);
-            index_buffer_top_slice.push(vertex_indexe_3);
+        if side[vertex_indexe_1] == CutDirection::Top
+            && side[vertex_indexe_2] == CutDirection::Top
+            && side[vertex_indexe_3] == CutDirection::Top
+        {
+            push_triangle(
+                index_buffer_top_slice,
+                vertex_indexe_1,
+                vertex_indexe_2,
+                vertex_indexe_3,
+            );
         }
         // if triangle is bellow plane
-        else if !side[vertex_indexe_1] && !side[vertex_indexe_2] && !side[vertex_indexe_3] {
-            index_buffer_bottom_slice.push(vertex_indexe_1);
-            index_buffer_bottom_slice.push(vertex_indexe_2);
-            index_buffer_bottom_slice.push(vertex_indexe_3);
+        else if side[vertex_indexe_1] == CutDirection::Bottom
+            && side[vertex_indexe_2] == CutDirection::Bottom
+            && side[vertex_indexe_3] == CutDirection::Bottom
+        {
+            push_triangle(
+                index_buffer_bottom_slice,
+                vertex_indexe_1,
+                vertex_indexe_2,
+                vertex_indexe_3,
+            );
         }
         // the triangle is beeing intercept by the slide plane:
         else {
+            let mut vertex_indexes: [VertexId; 3] = [0, 0, 0];
+            let mut two_edges_on_top = false;
+
             //two vertices above and one below:
-            if side[vertex_indexe_1] && side[vertex_indexe_2] && !side[vertex_indexe_3] {
-                split_small_triangles(
-                    origin_point,
-                    normal_vec,
-                    vertices,
-                    &mut index_buffer_top_slice,
-                    &mut index_buffer_bottom_slice,
-                    vertex_indexe_1,
-                    vertex_indexe_2,
-                    vertex_indexe_3,
-                    true,
-                    &mut vertices_added,
-                    &mut cut_face_vertices,
-                );
+            if side[vertex_indexe_1] == CutDirection::Top
+                && side[vertex_indexe_2] == CutDirection::Top
+                && side[vertex_indexe_3] == CutDirection::Bottom
+            {
+                vertex_indexes = [vertex_indexe_3, vertex_indexe_1, vertex_indexe_2];
+                two_edges_on_top = true;
             }
 
-            if side[vertex_indexe_1] && !side[vertex_indexe_2] && side[vertex_indexe_3] {
-                split_small_triangles(
-                    origin_point,
-                    normal_vec,
-                    vertices,
-                    &mut index_buffer_top_slice,
-                    &mut index_buffer_bottom_slice,
-                    vertex_indexe_1,
-                    vertex_indexe_3,
-                    vertex_indexe_2,
-                    true,
-                    &mut vertices_added,
-                    &mut cut_face_vertices,
-                );
+            if side[vertex_indexe_1] == CutDirection::Top
+                && side[vertex_indexe_2] == CutDirection::Bottom
+                && side[vertex_indexe_3] == CutDirection::Top
+            {
+                vertex_indexes = [vertex_indexe_2, vertex_indexe_3, vertex_indexe_1];
+                two_edges_on_top = true;
             }
 
-            if !side[vertex_indexe_1] && side[vertex_indexe_2] && side[vertex_indexe_3] {
-                split_small_triangles(
-                    origin_point,
-                    normal_vec,
-                    vertices,
-                    &mut index_buffer_top_slice,
-                    &mut index_buffer_bottom_slice,
-                    vertex_indexe_2,
-                    vertex_indexe_3,
-                    vertex_indexe_1,
-                    true,
-                    &mut vertices_added,
-                    &mut cut_face_vertices,
-                );
+            if side[vertex_indexe_1] == CutDirection::Bottom
+                && side[vertex_indexe_2] == CutDirection::Top
+                && side[vertex_indexe_3] == CutDirection::Top
+            {
+                vertex_indexes = [vertex_indexe_1, vertex_indexe_2, vertex_indexe_3];
+                two_edges_on_top = true;
             }
 
             // two vertices below and one above:
-            if side[vertex_indexe_1] && !side[vertex_indexe_2] && !side[vertex_indexe_3] {
-                split_small_triangles(
-                    origin_point,
-                    normal_vec,
-                    vertices,
-                    &mut index_buffer_top_slice,
-                    &mut index_buffer_bottom_slice,
-                    vertex_indexe_2,
-                    vertex_indexe_3,
-                    vertex_indexe_1,
-                    false,
-                    &mut vertices_added,
-                    &mut cut_face_vertices,
-                );
+            if side[vertex_indexe_1] == CutDirection::Top
+                && side[vertex_indexe_2] == CutDirection::Bottom
+                && side[vertex_indexe_3] == CutDirection::Bottom
+            {
+                vertex_indexes = [vertex_indexe_1, vertex_indexe_2, vertex_indexe_3];
             }
 
-            if !side[vertex_indexe_1] && side[vertex_indexe_2] && !side[vertex_indexe_3] {
-                split_small_triangles(
-                    origin_point,
-                    normal_vec,
-                    vertices,
-                    &mut index_buffer_top_slice,
-                    &mut index_buffer_bottom_slice,
-                    vertex_indexe_1,
-                    vertex_indexe_3,
-                    vertex_indexe_2,
-                    false,
-                    &mut vertices_added,
-                    &mut cut_face_vertices,
-                );
+            if side[vertex_indexe_1] == CutDirection::Bottom
+                && side[vertex_indexe_2] == CutDirection::Top
+                && side[vertex_indexe_3] == CutDirection::Bottom
+            {
+                vertex_indexes = [vertex_indexe_2, vertex_indexe_3, vertex_indexe_1];
             }
 
-            if !side[vertex_indexe_1] && !side[vertex_indexe_2] && side[vertex_indexe_3] {
-                split_small_triangles(
-                    origin_point,
-                    normal_vec,
-                    vertices,
-                    &mut index_buffer_top_slice,
-                    &mut index_buffer_bottom_slice,
-                    vertex_indexe_1,
-                    vertex_indexe_2,
-                    vertex_indexe_3,
-                    false,
-                    &mut vertices_added,
-                    &mut cut_face_vertices,
-                );
+            if side[vertex_indexe_1] == CutDirection::Bottom
+                && side[vertex_indexe_2] == CutDirection::Bottom
+                && side[vertex_indexe_3] == CutDirection::Top
+            {
+                vertex_indexes = [vertex_indexe_3, vertex_indexe_1, vertex_indexe_2];
             }
+
+            split_small_triangles(
+                plane,
+                index_buffer_top_slice,
+                index_buffer_bottom_slice,
+                vertex_indexes,
+                two_edges_on_top,
+                &mut vertices_added,
+                &mut constrained_edges,
+                &mut cut_face_vertices_id,
+                mesh_mapping,
+            );
         }
     }
 
-    info!("index_buffer_top_slice {:?}", index_buffer_top_slice);
-    info!("index_buffer_bottom_slice {:?}", index_buffer_bottom_slice);
-    info!("vertices len {:?}", vertices);
-    info!("cut face vertices {:?}", cut_face_vertices);
-
-    (index_buffer_top_slice, index_buffer_bottom_slice)
+    (
+        constrained_edges,
+        to_vertex(&cut_face_vertices_id, mesh_mapping),
+    )
 }
 
-fn is_point_left(edge1: Vec3A, edge2: Vec3A, point: Vec3A) -> bool {
-    (edge2.x - edge1.x) * (point.y - edge1.y) - (edge2.y - edge1.y) * (point.x - edge1.x) > 0.
-}
 /// if two edges on top:
-///  1-----------------2
+///```text
+///  3-----------------2
 ///   |              |
 ///     |          |
-///   --13|-------| 23---- plane
+///   --13|-------| 13---- plane
 ///         |   |
 ///           |
-///           3
-/// and the top quad is divided into 1 2 13 and 2 23 13, and we get the bottom triangle 13 23 3 (indices might be differents)
+///           1
+///```
 ///
 /// if two edges bellow:
-///           3
+///```text
+///           1
 ///           |
 ///         |   |
-///   --13|-------| 23---- plane
+///   --12|-------| 13---- plane
 ///     |           |
 ///   |               |
-///  1------------------2
-/// and the bottom quad is divided into 3 1 13 and 2 13 23, and we get the top triangle 23 13 3 (indices might be differents)
+///  2------------------3
+///```
 fn split_small_triangles(
-    origin_point: &Vec3A,
-    normal_vec: &Vec3A,
-    vertices: &mut Vec<[f32; 3]>,
-    index_buffer_top_slice: &mut Vec<usize>,
-    index_buffer_bottom_slice: &mut Vec<usize>,
-    vertex_indexe_1: usize,
-    vertex_indexe_2: usize,
-    vertex_indexe_3: usize,
+    plane: Plane,
+    index_buffer_top_slice: &mut Vec<VertexId>,
+    index_buffer_bottom_slice: &mut Vec<VertexId>,
+    vertex_indexes: [VertexId; 3],
     two_edges_on_top: bool,
     vertices_added: &mut HashMap<[OrderedFloat<f32>; 3], VertexId>,
-    cut_face_vertices: &mut HashSet<Edge>,
+    constrained_edges: &mut HashSet<Edge>,
+    cut_face_vertices: &mut Vec<VertexId>,
+    mesh_mapping: &mut MeshMapping,
 ) {
     // vertices of the current triangle crossed by the slice plane
-    let v1 = Vec3A::from_array(*vertices.get(vertex_indexe_1).unwrap());
-    let v2 = Vec3A::from_array(*vertices.get(vertex_indexe_2).unwrap());
-    let v3 = Vec3A::from_array(*vertices.get(vertex_indexe_3).unwrap());
+    let v1 = *mesh_mapping.vertex().get(vertex_indexes[0]).unwrap();
+    let v2 = *mesh_mapping.vertex().get(vertex_indexes[1]).unwrap();
+    let v3 = *mesh_mapping.vertex().get(vertex_indexes[2]).unwrap();
 
     // check if the two edges of the triangle are crossed
     match (
-        find_intersection_line_plane(v1, v1 - v3, *origin_point, *normal_vec),
-        find_intersection_line_plane(v2, v2 - v3, *origin_point, *normal_vec),
+        find_intersection_line_plane(v1, v1 - v3, plane.origin_point, plane.normal_vec),
+        find_intersection_line_plane(v1, v1 - v2, plane.origin_point, plane.normal_vec),
     ) {
         // Check if the cut plane do intersect the triangle
         (None, None) => (),
         (None, Some(_)) => (),
         (Some(_), None) => (),
-        (Some(v13), Some(v23)) => {
+        (Some(v13), Some(v12)) => {
             // /!\ Interpolate normals and UV coordinates
 
             // /!\ Add vertices/normals/uv for the intersection points to each mesh
@@ -379,121 +298,98 @@ fn split_small_triangles(
                 OrderedFloat(v13.y),
                 OrderedFloat(v13.z),
             ];
-            let ordered_v23 = [
-                OrderedFloat(v23.x),
-                OrderedFloat(v23.y),
-                OrderedFloat(v23.z),
+            let ordered_v12 = [
+                OrderedFloat(v12.x),
+                OrderedFloat(v12.y),
+                OrderedFloat(v12.z),
             ];
 
             // create the indices
-            let index13;
-            let index23;
-
-            if !vertices_added.contains_key(&ordered_v13) {
-                index13 = vertices.len();
-                // add the new vertices in the hash map
-                vertices_added.insert(ordered_v13, index13);
-
-                // add the new vertices in the list
-                vertices.push(v13.to_array());
-            } else {
-                index13 = *vertices_added.get(&ordered_v13).unwrap();
-            }
-
-            if !vertices_added.contains_key(&ordered_v23) {
-                index23 = vertices.len();
-                // add the new vertices in the hash map
-                vertices_added.insert(ordered_v23, index23);
-
-                // add the new vertices in the list
-                vertices.push(v23.to_array());
-            } else {
-                index23 = *vertices_added.get(&ordered_v23).unwrap();
-            }
-
-            info!("indexes {},{}", index13, index23);
+            let index13 = single_index(
+                ordered_v13,
+                mesh_mapping,
+                vertices_added,
+                cut_face_vertices,
+                v13,
+            );
+            let index12 = single_index(
+                ordered_v12,
+                mesh_mapping,
+                vertices_added,
+                cut_face_vertices,
+                v12,
+            );
 
             if two_edges_on_top {
                 // add two triangles on top
-                index_buffer_top_slice.push(index23);
-                index_buffer_top_slice.push(index13);
-                index_buffer_top_slice.push(vertex_indexe_2);
-
-                index_buffer_top_slice.push(index13);
-                index_buffer_top_slice.push(vertex_indexe_1);
-                index_buffer_top_slice.push(vertex_indexe_2);
+                push_triangle(index_buffer_top_slice, index12, index13, vertex_indexes[1]);
+                push_triangle(
+                    index_buffer_top_slice,
+                    index13,
+                    vertex_indexes[2],
+                    vertex_indexes[1],
+                );
 
                 // and one bellow
-                index_buffer_bottom_slice.push(vertex_indexe_3);
-                index_buffer_bottom_slice.push(index13);
-                index_buffer_bottom_slice.push(index23);
+                push_triangle(
+                    index_buffer_bottom_slice,
+                    vertex_indexes[0],
+                    index13,
+                    index12,
+                );
 
-                cut_face_vertices.insert(Edge::new(index13, index23));
+                constrained_edges.insert(Edge::new(
+                    index12 - mesh_mapping.initial_size(),
+                    index13 - mesh_mapping.initial_size(),
+                ));
             } else {
                 // add two triangles bellow
-                index_buffer_bottom_slice.push(vertex_indexe_1);
-                index_buffer_bottom_slice.push(vertex_indexe_2);
-                index_buffer_bottom_slice.push(index13);
+                push_triangle(
+                    index_buffer_bottom_slice,
+                    vertex_indexes[2],
+                    vertex_indexes[1],
+                    index12,
+                );
 
-                index_buffer_bottom_slice.push(vertex_indexe_2);
-                index_buffer_bottom_slice.push(index23);
-                index_buffer_bottom_slice.push(index13);
+                push_triangle(
+                    index_buffer_bottom_slice,
+                    vertex_indexes[2],
+                    index12,
+                    index13,
+                );
 
                 // and one on top
-                index_buffer_top_slice.push(index13);
-                index_buffer_top_slice.push(index23);
-                index_buffer_top_slice.push(vertex_indexe_3);
 
-                cut_face_vertices.insert(Edge::new(index23, index13));
+                push_triangle(
+                    index_buffer_bottom_slice,
+                    index13,
+                    index12,
+                    vertex_indexes[0],
+                );
+
+                constrained_edges.insert(Edge::new(
+                    index13 - mesh_mapping.initial_size(),
+                    index12 - mesh_mapping.initial_size(),
+                ));
             }
         }
     }
 }
 
-fn find_intersection_line_plane(
-    line_point: Vec3A,
-    line_direction: Vec3A,
-    origin_point: Vec3A,
-    normal_vec: Vec3A,
-) -> Option<Vec3A> {
-    Some(
-        line_point
-            - line_direction * (line_point - origin_point).dot(normal_vec)
-                / line_direction.dot(normal_vec),
-    )
-
-    // if normal_vec.dot(line_direction.normalize()).is_nan() {
-    //     return None;
-    // }
-
-    // let t = (normal_vec.dot(origin_point) - normal_vec.dot(line_point))
-    //     / normal_vec.dot(line_direction.normalize());
-    // Some(line_point + line_direction.normalize() * t)
-
-    // let eps = 1e-6;
-    // let d = normal_vec.dot(line_direction);
-
-    // if d.abs() > eps {
-    //     let w = line_point - origin_point;
-    //     let fac = -normal_vec.dot(w) / d;
-    //     let u = origin_point + line_direction * fac;
-    //     return Some(u);
-    // }
-
-    // None
-
-    // let output = Vec3A::ZERO;
-
-    // let d = normal_vec.dot(origin_point);
-    // if normal_vec.dot(line_direction).is_nan() {
-    //     (false, output)
-    // } else {
-    //     let x = (d - normal_vec.dot(line_point)) / normal_vec.dot(line_direction);
-    //     (true, line_point + line_direction.normalize() * x)
-    // }
+fn spawn_fragments(
+    meshes: Vec<Mesh>,
+    pos: Vec3A,
+    materials: ResMut<Assets<StandardMaterial>>,
+    meshes_assets: &mut ResMut<Assets<Mesh>>,
+    commands: &mut Commands,
+) {
+    for mesh in meshes {
+        let mesh_handle = meshes_assets.add(mesh.clone());
+        spawn_fragment(&mesh, &mesh_handle, &materials, commands, pos.into());
+    }
 }
 
-fn spawn_fragments(
+fn spawn_fragment(
     fragment_mesh: &Mesh,
     fragment_mesh_handle: &Handle<Mesh>,
     mut materials: &ResMut<Assets<StandardMaterial>>,
