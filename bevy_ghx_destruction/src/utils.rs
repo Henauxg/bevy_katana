@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use bevy::math::Vec3A;
+use bevy::{
+    math::{Vec2, Vec3A},
+    utils::petgraph::matrix_graph::Zero,
+};
 use ghx_constrained_delaunay::types::VertexId;
 use ordered_float::OrderedFloat;
 use rand::Rng;
@@ -26,9 +29,37 @@ pub fn find_intersection_line_plane(
     )
 }
 
+pub fn find_intersection_line_plane_bis(
+    line_point_start: Vec3A,
+    line_point_end: Vec3A,
+    origin_point: Vec3A,
+    normal_vec: Vec3A,
+) -> Option<(Vec3A, f32)> {
+    // Handle degenerate cases
+    if line_point_start == line_point_end {
+        return None;
+    } else if normal_vec == Vec3A::ZERO {
+        return None;
+    }
+
+    // `s` is the parameter for the line segment a -> b where 0.0 <= s <= 1.0
+    let s = (origin_point - line_point_start).dot(normal_vec)
+        / (line_point_end - line_point_start).dot(normal_vec);
+
+    if s >= 0. && s <= 1. {
+        return Some((
+            line_point_start + (line_point_end - line_point_start) * s,
+            s,
+        ));
+    }
+
+    return None;
+}
+
+//todo:voir si colineaire ok
 pub fn is_above_plane(point: Vec3A, plane: Plane) -> CutDirection {
-    let vector_to_plane = (point - plane.origin_point).normalize();
-    let distance = -vector_to_plane.dot(plane.normal_vec);
+    let vector_to_plane = (point - plane.origin()).normalize();
+    let distance = -vector_to_plane.dot(plane.normal());
     if distance < 0. {
         return CutDirection::Top;
     }
@@ -45,8 +76,8 @@ pub fn to_vertex(
     for vertex in cut_face_vertices_id.iter() {
         let v = [
             mesh_mapping.vertex()[*vertex].x,
-            mesh_mapping.vertex()[*vertex].x,
-            mesh_mapping.vertex()[*vertex].x,
+            mesh_mapping.vertex()[*vertex].y,
+            mesh_mapping.vertex()[*vertex].z,
         ];
         cut_face_vertices.push(v);
     }
@@ -59,6 +90,8 @@ pub fn single_index(
     vertices_added: &mut HashMap<[OrderedFloat<f32>; 3], VertexId>,
     cut_face_vertices: &mut Vec<VertexId>,
     vertex: Vec3A,
+    uv: Vec2,
+    normal: Vec3A,
 ) -> VertexId {
     let index;
     if !vertices_added.contains_key(&oredered_float) {
@@ -68,6 +101,10 @@ pub fn single_index(
 
         // add the new vertices in the list
         mesh_mapping.vertex_mut().push(vertex);
+
+        mesh_mapping.uv_mut().push(uv);
+
+        mesh_mapping.normal_mut().push(normal);
 
         cut_face_vertices.push(index);
     } else {

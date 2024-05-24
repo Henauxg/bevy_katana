@@ -1,5 +1,5 @@
 use bevy::{
-    math::Vec3A,
+    math::{Vec2, Vec3A},
     render::{
         mesh::{Indices, Mesh, PrimitiveTopology, VertexAttributeValues},
         render_asset::RenderAssetUsages,
@@ -28,8 +28,8 @@ pub enum CutDirection {
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Plane {
-    pub origin_point: Vec3A,
-    pub normal_vec: Vec3A,
+    origin_point: Vec3A,
+    normal_vec: Vec3A,
 }
 
 impl Plane {
@@ -40,12 +40,22 @@ impl Plane {
             normal_vec,
         }
     }
+
+    pub fn origin(&self) -> Vec3A {
+        *&self.origin_point
+    }
+
+    pub fn normal(&self) -> Vec3A {
+        *&self.normal_vec
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct MeshMapping {
     vertex_buffer: Vec<Vec3A>,
     index_buffer: Vec<VertexId>,
+    uv_buffer: Vec<Vec2>,
+    normal_buffer: Vec<Vec3A>,
     initial_size: usize,
 }
 
@@ -53,11 +63,15 @@ impl MeshMapping {
     pub fn new(
         vertex_buffer: Vec<Vec3A>,
         index_buffer: Vec<VertexId>,
+        uv_buffer: Vec<Vec2>,
+        normal_buffer: Vec<Vec3A>,
         initial_size: usize,
     ) -> MeshMapping {
         MeshMapping {
             vertex_buffer,
             index_buffer,
+            uv_buffer,
+            normal_buffer,
             initial_size,
         }
     }
@@ -70,22 +84,65 @@ impl MeshMapping {
         &self.vertex_buffer
     }
 
+    pub fn uv(&self) -> &Vec<Vec2> {
+        &self.uv_buffer
+    }
+
+    pub fn normal(&self) -> &Vec<Vec3A> {
+        &self.normal_buffer
+    }
+
     pub fn vertex_mut(&mut self) -> &mut Vec<Vec3A> {
         &mut self.vertex_buffer
     }
 
-    pub fn mesh_mapping_from_mesh(mesh: &Mesh) -> MeshMapping {
-        let Some(VertexAttributeValues::Float32x3(mesh_vertices)) =
-            mesh.attribute(Mesh::ATTRIBUTE_POSITION)
-        else {
-            return MeshMapping::new(Vec::new(), Vec::new(), 0);
-        };
+    pub fn uv_mut(&mut self) -> &mut Vec<Vec2> {
+        &mut self.uv_buffer
+    }
 
-        let mut vertices = Vec::new();
+    pub fn normal_mut(&mut self) -> &mut Vec<Vec3A> {
+        &mut self.normal_buffer
+    }
 
-        for vertex in mesh_vertices.iter() {
-            vertices.push(Vec3A::from_array(*vertex));
+    pub fn to_mesh_mapping(
+        indexes: Vec<VertexId>,
+        uvs: &mut Vec<Vec2>,
+        normal: &mut Vec<Vec3A>,
+        mesh_mapping: &mut MeshMapping,
+    ) -> MeshMapping {
+        mesh_mapping.uv_mut().append(uvs);
+        mesh_mapping.normal_mut().append(normal);
+
+        let mut mesh_mapping_vertices = vec![Vec3A::ZERO; indexes.len()];
+        let mut mesh_mapping_index: Vec<VertexId> = vec![0; indexes.len()];
+        let mut mesh_mapping_uvs = vec![Vec2::ZERO; indexes.len()];
+        let mut mesh_mapping_normals = vec![Vec3A::ZERO; indexes.len()];
+
+        for (i, index) in indexes.iter().enumerate() {
+            mesh_mapping_vertices[i] = mesh_mapping.vertex()[*index];
+            mesh_mapping_index[i] = i;
+            mesh_mapping_uvs[i] = mesh_mapping.uv()[*index];
+            mesh_mapping_normals[i] = mesh_mapping.normal()[*index];
         }
+
+        MeshMapping::new(
+            mesh_mapping_vertices,
+            mesh_mapping_index,
+            mesh_mapping_uvs,
+            mesh_mapping_normals,
+            mesh_mapping.vertex().len(),
+        )
+    }
+
+    pub fn mesh_mapping_from_mesh(mesh: &Mesh) -> MeshMapping {
+        let vertices: Vec<Vec3A> = mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+            .as_float3()
+            .unwrap()
+            .iter()
+            .map(|v| Vec3A::from_array(*v))
+            .collect();
 
         // Get the vertices indexes of the current mesh
         let mesh_indices = mesh.indices().unwrap();
@@ -96,52 +153,70 @@ impl MeshMapping {
             vertices_id.push(mesh_indices.at(indice));
         }
 
-        MeshMapping::new(vertices, vertices_id, mesh_vertices.len())
+        let uv = match mesh.attribute(Mesh::ATTRIBUTE_UV_0).unwrap() {
+            VertexAttributeValues::Float32x2(values) => Some(values),
+            _ => None,
+        }
+        .unwrap();
+
+        let normal = match mesh.attribute(Mesh::ATTRIBUTE_NORMAL).unwrap() {
+            VertexAttributeValues::Float32x3(values) => Some(values),
+            _ => None,
+        }
+        .unwrap();
+
+        MeshMapping::new(
+            vertices,
+            vertices_id,
+            uv.clone().iter().map(|v| Vec2::from_array(*v)).collect(),
+            normal
+                .clone()
+                .iter()
+                .map(|v| Vec3A::from_array(*v))
+                .collect(),
+            mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+                .unwrap()
+                .as_float3()
+                .unwrap()
+                .len(),
+        )
     }
 
     pub fn create_mesh(&self) -> Mesh {
-        let mut fragment_mesh = Mesh::new(
+        let fragment_mesh = Mesh::new(
             PrimitiveTopology::TriangleList,
-            RenderAssetUsages::MAIN_WORLD,
-        );
-
-        //set vertices
-        fragment_mesh.insert_attribute(
+            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+        )
+        .with_inserted_attribute(
             Mesh::ATTRIBUTE_POSITION,
             MeshMapping::into_bevy_vertices(&self.vertex()),
-        );
-
-        // //set normals
-        // fragment_top.insert_attribute(Mesh::ATTRIBUTE_NORMAL);
-
-        // //set uv
-        // fragment_top.insert_attribute(Mesh::ATTRIBUTE_UV_0);
-
+        )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, MeshMapping::into_bevy_uvs(&self.uv()))
+        .with_inserted_attribute(
+            Mesh::ATTRIBUTE_NORMAL,
+            MeshMapping::into_bevy_normal(&self.normal()),
+        )
+        .with_inserted_indices(Indices::U32(MeshMapping::into_bevy_indices(&self.index())));
         fragment_mesh
     }
 
     pub fn into_bevy_vertices(vertex_buffer: &Vec<Vec3A>) -> Vec<[f32; 3]> {
-        let mut vertices: Vec<[f32; 3]> = vec![[0., 0., 0.]; vertex_buffer.len()];
-        for (index, vertex) in vertex_buffer.iter().enumerate() {
-            vertices[index] = vertex.to_array();
-        }
+        vertex_buffer.iter().map(|v| v.to_array()).collect()
+    }
 
-        vertices
+    pub fn into_bevy_indices(index_buffer: &Vec<VertexId>) -> Vec<u32> {
+        index_buffer.iter().map(|i| *i as u32).collect()
+    }
+
+    pub fn into_bevy_uvs(uvs_buffer: &Vec<Vec2>) -> Vec<[f32; 2]> {
+        uvs_buffer.iter().map(|i| i.to_array()).collect()
+    }
+
+    pub fn into_bevy_normal(normal_buffer: &Vec<Vec3A>) -> Vec<[f32; 3]> {
+        normal_buffer.iter().map(|i| i.to_array()).collect()
     }
 
     pub fn index(&self) -> &Vec<VertexId> {
         &self.index_buffer
-    }
-
-    pub fn add_triangle(&mut self, i1: VertexId, i2: VertexId, i3: VertexId) {
-        let _ = &self.index_buffer.push(i1);
-        let _ = &self.index_buffer.push(i2);
-        let _ = &self.index_buffer.push(i3);
-    }
-
-    pub fn add_mapped_vertex(&mut self, vertex: &Vec3A, vertex_id: VertexId) {
-        let _ = &self.vertex_buffer.push(*vertex);
-        self.index_buffer.push(vertex_id);
-        // TODO Mapping
     }
 }

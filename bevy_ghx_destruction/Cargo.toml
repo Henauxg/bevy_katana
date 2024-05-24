@@ -15,3 +15,4 @@ bevy_rapier3d = { version = "0.25.0", features = [
     "simd-stable",
     "debug-render-3d",
 ] }
+cdt = "0.1.0"
