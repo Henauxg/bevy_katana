@@ -38,7 +38,6 @@ use crate::{
     fps::{FpsDisplayPlugin, FpsRoot},
     DEFAULT_EXAMPLES_FONT_SIZE,
 };
-
 pub struct ExamplesPlugin;
 
 impl Plugin for ExamplesPlugin {
@@ -78,7 +77,7 @@ pub fn setup_camera(mut commands: Commands) {
         },
         PanOrbitCamera {
             radius: (look_target - camera_position).length(),
-            auto_orbit:false,
+            auto_orbit: false,
             ..Default::default()
         },
     ));
