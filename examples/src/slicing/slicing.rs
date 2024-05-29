@@ -1,15 +1,24 @@
-use bevy::prelude::*;
+use bevy::{
+    app::{App, Startup, Update}, asset::Assets, ecs::{component::Component, system::{Commands, Res, ResMut}}, gizmos::gizmos::Gizmos, input::{keyboard::KeyCode, mouse::MouseButton, ButtonInput}, log::info, math::primitives::Cuboid, pbr::{PbrBundle, StandardMaterial}, prelude::default, render::{
+        color::Color,
+        mesh::{Mesh, Meshable},
+    }, transform::components::Transform, DefaultPlugins
+};
 
-use bevy_ghx_destruction::slicing::slicing::slice;
+use bevy_ghx_destruction::
+    slicing::slicing::slice
+;
+use bevy_mod_billboard::plugin::BillboardPlugin;
 use bevy_mod_raycast::prelude::*;
-use bevy_rapier3d::plugin::{NoUserData, RapierPhysicsPlugin};
+use bevy_rapier3d::{plugin::{NoUserData, RapierPhysicsPlugin}, render::RapierDebugRenderPlugin};
 use examples::plugin::ExamplesPlugin;
+
 fn main() {
     App::new()
-        .add_plugins((DefaultPlugins, ExamplesPlugin))
+        .add_plugins((DefaultPlugins, ExamplesPlugin, BillboardPlugin))
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugins(DefaultRaycastingPlugin)
-        // .add_plugins(RapierDebugRenderPlugin::default())
+        .add_plugins(RapierDebugRenderPlugin::default())
         .add_systems(Startup, setup)
         .add_systems(Update, raycast)
         .run();
