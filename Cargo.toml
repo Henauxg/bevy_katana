@@ -1,10 +1,12 @@
 [workspace]
 resolver = "2"
 
+exclude = ["ghx_constrained_delaunay"]
+
 members = [
-	"bevy_ghx_destruction",     # Bevy plugin
-	"examples",                 # Bevy plugin examples
-	"ghx_constrained_delaunay", # Constrained Delaunay tiangulation
+	"bevy_ghx_destruction", # Bevy plugin
+	"examples",             # Bevy plugin examples
+	# "ghx_constrained_delaunay", # Constrained Delaunay tiangulation
 ]
 
 # Enable a small amount of optimization in debug mode
