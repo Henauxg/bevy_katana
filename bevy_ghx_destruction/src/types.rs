@@ -1,5 +1,4 @@
 use bevy::{
-    log::info,
     math::{Vec2, Vec3A},
     render::{
         mesh::{Indices, Mesh, PrimitiveTopology, VertexAttributeValues},
@@ -132,7 +131,10 @@ impl MeshBuilder {
         }
     }
 
-    pub fn constraints(&mut self) -> &mut Vec<Edge> {
+    pub fn constraints(&self) -> &Vec<Edge> {
+        &self.constraints
+    }
+    pub fn constraints_mut(&mut self) -> &mut Vec<Edge> {
         &mut self.constraints
     }
 
@@ -166,15 +168,15 @@ impl MeshBuilder {
         self.sliced_vertices.push(vertex);
     }
 
-    pub fn add_mapped_vertex(&mut self, vertex: MeshBuilderVertex, index: VertexId) {
+    pub fn add_mapped_vertex(&mut self, vertex: MeshBuilderVertex, index: usize) {
         self.vertices.push(vertex);
-        self.index_map[index] = &self.vertices.len() - 1;
+        self.index_map[index] = self.vertices.len() as VertexId - 1;
     }
 
     pub fn push_mapped_triangle(&mut self, v1: VertexId, v2: VertexId, v3: VertexId) {
-        self.triangles.push(self.index_map[v1]);
-        self.triangles.push(self.index_map[v2]);
-        self.triangles.push(self.index_map[v3]);
+        self.triangles.push(self.index_map[v1 as usize]);
+        self.triangles.push(self.index_map[v2 as usize]);
+        self.triangles.push(self.index_map[v3 as usize]);
     }
 
     pub fn push_triangle(&mut self, v1: VertexId, v2: VertexId, v3: VertexId) {
@@ -209,7 +211,7 @@ impl MeshBuilder {
         let indices = mesh.indices().unwrap();
 
         for index in 0..indices.len() {
-            triangles.push(indices.at(index));
+            triangles.push(indices.at(index) as VertexId);
         }
 
         triangles
@@ -274,8 +276,8 @@ impl MeshBuilder {
         }
 
         for edge in self.constraints.iter_mut() {
-            edge.from = index_map[edge.from];
-            edge.to = index_map[edge.to];
+            edge.from = index_map[edge.from as usize] as VertexId;
+            edge.to = index_map[edge.to as usize] as VertexId;
         }
 
         shrink_vertices.shrink_to_fit();
