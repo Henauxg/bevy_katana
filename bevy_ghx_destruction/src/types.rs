@@ -1,8 +1,10 @@
 use bevy::{
+    log::info,
     math::{Vec2, Vec3A},
     render::{
-        mesh::{Indices, Mesh, PrimitiveTopology, VertexAttributeValues}, render_asset::RenderAssetUsages}
-    ,
+        mesh::{Indices, Mesh, PrimitiveTopology, VertexAttributeValues},
+        render_asset::RenderAssetUsages,
+    },
 };
 use ghx_constrained_delaunay::types::{Edge, VertexId};
 
@@ -23,6 +25,7 @@ impl Indexable for Indices {
 pub enum CutDirection {
     Top,
     Bottom,
+    Unknow,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -163,7 +166,7 @@ impl MeshBuilder {
         self.sliced_vertices.push(vertex);
     }
 
-    pub fn add_vertex(&mut self, vertex: MeshBuilderVertex, index: VertexId) {
+    pub fn add_mapped_vertex(&mut self, vertex: MeshBuilderVertex, index: VertexId) {
         self.vertices.push(vertex);
         self.index_map[index] = &self.vertices.len() - 1;
     }
@@ -198,7 +201,7 @@ impl MeshBuilder {
 
         let triangles: Vec<VertexId> = Self::triangles_from_mesh(mesh);
 
-        MeshBuilder::new(vertices, sliced_vertices,triangles, index_map, constraints)
+        MeshBuilder::new(vertices, sliced_vertices, triangles, index_map, constraints)
     }
 
     pub fn triangles_from_mesh(mesh: &Mesh) -> Vec<VertexId> {
@@ -246,7 +249,8 @@ impl MeshBuilder {
 
     //todo: find better
     pub fn shrink_sliced_vertices(&mut self) {
-        let mut shrink_vertices: Vec<MeshBuilderVertex> = Vec::with_capacity(self.sliced_vertices.len());
+        let mut shrink_vertices: Vec<MeshBuilderVertex> =
+            Vec::with_capacity(self.sliced_vertices.len());
 
         let mut index_map = vec![0; self.sliced_vertices.len()];
 
@@ -277,8 +281,6 @@ impl MeshBuilder {
         shrink_vertices.shrink_to_fit();
 
         self.sliced_vertices = shrink_vertices;
-
-
     }
 
     pub fn create_mesh(&self) -> Mesh {
@@ -288,46 +290,79 @@ impl MeshBuilder {
         )
         .with_inserted_attribute(
             Mesh::ATTRIBUTE_POSITION,
-            MeshBuilder::into_bevy_vertices(&self.vertices()),
+            MeshBuilder::into_bevy_vertices(&self.vertices(), &self.sliced_vertices()),
         )
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, MeshBuilder::into_bevy_uvs(&self.vertices()))
+        .with_inserted_attribute(
+            Mesh::ATTRIBUTE_UV_0,
+            MeshBuilder::into_bevy_uvs(&self.vertices(), &self.sliced_vertices()),
+        )
         .with_inserted_attribute(
             Mesh::ATTRIBUTE_NORMAL,
-            MeshBuilder::into_bevy_normal(&self.vertices()),
+            MeshBuilder::into_bevy_normal(&self.vertices(), &self.sliced_vertices()),
         )
-        .with_inserted_indices(Indices::U32(MeshBuilder::into_bevy_indices(&self.index())));
+        .with_inserted_indices(Indices::U32(MeshBuilder::into_bevy_indices(
+            &self.triangles(),
+        )));
         fragment_mesh
     }
 
-    pub fn into_bevy_vertices(vertex_buffer: &Vec<MeshBuilderVertex>) -> Vec<[f32; 3]> {
-        let mut vertices = Vec::new();
+    pub fn into_bevy_vertices(
+        vertex_buffer: &Vec<MeshBuilderVertex>,
+        sliced_vertices: &Vec<MeshBuilderVertex>,
+    ) -> Vec<[f32; 3]> {
+        let mut vertices_uncut = Vec::new();
         for vertex in 0..vertex_buffer.len() {
-            vertices.push(vertex_buffer[vertex].pos);
+            vertices_uncut.push(vertex_buffer[vertex].pos);
         }
 
-        vertices.iter().map(|v| v.to_array()).collect()
+        let mut vertices_cut = Vec::new();
+        for vertex in 0..sliced_vertices.len() {
+            vertices_cut.push(sliced_vertices[vertex].pos);
+        }
+        vertices_uncut.append(&mut vertices_cut);
+
+        vertices_uncut.iter().map(|v| v.to_array()).collect()
     }
 
     pub fn into_bevy_indices(index_buffer: &Vec<VertexId>) -> Vec<u32> {
         index_buffer.iter().map(|i| *i as u32).collect()
     }
 
-    pub fn into_bevy_uvs(vertex_buffer: &Vec<MeshBuilderVertex>) -> Vec<[f32; 2]> {
-        let mut vertices = Vec::new();
+    pub fn into_bevy_uvs(
+        vertex_buffer: &Vec<MeshBuilderVertex>,
+        sliced_vertices: &Vec<MeshBuilderVertex>,
+    ) -> Vec<[f32; 2]> {
+        let mut vertices_uncut = Vec::new();
         for vertex in 0..vertex_buffer.len() {
-            vertices.push(vertex_buffer[vertex].uv);
+            vertices_uncut.push(vertex_buffer[vertex].uv);
         }
 
-        vertices.iter().map(|v| v.to_array()).collect()
+        let mut vertices_cut = Vec::new();
+        for vertex in 0..sliced_vertices.len() {
+            vertices_cut.push(sliced_vertices[vertex].uv);
+        }
+        vertices_uncut.append(&mut vertices_cut);
+
+        vertices_uncut.iter().map(|v| v.to_array()).collect()
     }
 
-    pub fn into_bevy_normal(vertex_buffer: &Vec<MeshBuilderVertex>) -> Vec<[f32; 3]> {
-        let mut vertices = Vec::new();
+    pub fn into_bevy_normal(
+        vertex_buffer: &Vec<MeshBuilderVertex>,
+        sliced_vertices: &Vec<MeshBuilderVertex>,
+    ) -> Vec<[f32; 3]> {
+        let mut vertices_uncut = Vec::new();
         for vertex in 0..vertex_buffer.len() {
-            vertices.push(vertex_buffer[vertex].normal);
+            vertices_uncut.push(vertex_buffer[vertex].normal);
         }
 
-        vertices.iter().map(|v| v.to_array()).collect()
+        let mut vertices_cut = Vec::new();
+        for vertex in 0..sliced_vertices.len() {
+            vertices_cut.push(sliced_vertices[vertex].normal);
+        }
+
+        vertices_uncut.append(&mut vertices_cut);
+
+        vertices_uncut.iter().map(|v| v.to_array()).collect()
     }
 
     pub fn index(&self) -> &Vec<VertexId> {
