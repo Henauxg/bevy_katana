@@ -249,7 +249,7 @@ impl MeshBuilder {
             .collect()
     }
 
-    //todo: find better
+    //todo: use ordered float
     pub fn shrink_sliced_vertices(&mut self) {
         let mut shrink_vertices: Vec<MeshBuilderVertex> =
             Vec::with_capacity(self.sliced_vertices.len());

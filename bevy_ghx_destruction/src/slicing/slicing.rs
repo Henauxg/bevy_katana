@@ -430,13 +430,13 @@ fn split_small_triangles(
 
     let mut v = vec![MeshBuilderVertex::new(Vec3A::ZERO, Vec2::ZERO, Vec3A::ZERO); 3];
 
-    for vertex_id in vertex_indexes.iter() {
+    for (i, vertex_id) in vertex_indexes.iter().enumerate() {
         let v_id = *vertex_id as usize;
         if v_id < mesh_builder.vertices().len() {
-            v[v_id] = mesh_builder.vertices()[vertex_indexes[0] as usize];
+            v[v_id] = mesh_builder.vertices()[vertex_indexes[i] as usize];
         } else {
             v[v_id] = mesh_builder.sliced_vertices()
-                [vertex_indexes[0] as usize - mesh_builder.vertices().len()];
+                [vertex_indexes[i] as usize - mesh_builder.vertices().len()];
         }
     }
 
