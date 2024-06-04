@@ -9,7 +9,7 @@ pub fn get_random_normalized_vec() -> Vec3A {
     Vec3A::new(rng.gen::<f32>(), rng.gen::<f32>(), rng.gen::<f32>()).normalize()
 }
 
-pub fn find_intersection_line_plane_bis_bis(
+pub fn find_intersection_line_plane(
     line_point_start: Vec3A,
     line_point_end: Vec3A,
     origin_point: Vec3A,
@@ -39,12 +39,24 @@ pub fn find_intersection_line_plane_bis_bis(
 }
 
 //todo:voir si colineaire ok
+// pub fn is_above_plane(point: Vec3A, plane: Plane) -> CutDirection {
+//     let vector_to_plane = (point - plane.origin()).normalize();
+//     let distance = -vector_to_plane.dot(plane.normal());
+//     if distance < 0. {
+//         return CutDirection::Top;
+//     }
+
+//     CutDirection::Bottom
+// }
+
 pub fn is_above_plane(point: Vec3A, plane: Plane) -> CutDirection {
-    let vector_to_plane = (point - plane.origin()).normalize();
-    let distance = -vector_to_plane.dot(plane.normal());
-    if distance < 0. {
+    if (plane.normal().x * (point.x - plane.origin().x)
+        + plane.normal().y * (point.y - plane.origin().y)
+        + plane.normal().z * (point.z - plane.origin().z))
+        >= 0.
+    {
         return CutDirection::Top;
     }
 
-    CutDirection::Bottom
+    return CutDirection::Bottom;
 }

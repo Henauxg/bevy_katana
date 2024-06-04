@@ -20,7 +20,7 @@ impl Indexable for Indices {
     }
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub enum CutDirection {
     Top,
     Bottom,
@@ -116,7 +116,7 @@ impl MeshBuilder {
 
     pub fn new_from(mesh_mapping: &MeshBuilder) -> MeshBuilder {
         MeshBuilder::new_from_mesh_builder(
-            mesh_mapping.vertices().len(),
+            mesh_mapping.vertices().len() + mesh_mapping.sliced_vertices().len(),
             mesh_mapping.triangles().len(),
         )
     }
