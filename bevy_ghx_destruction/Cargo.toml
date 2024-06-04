@@ -19,3 +19,4 @@ bevy_rapier3d = { version = "0.25.0", features = [
     "debug-render-3d",
 ] }
 cdt = "0.1.0"
+glam = "0.25"

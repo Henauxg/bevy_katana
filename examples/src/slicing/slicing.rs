@@ -8,7 +8,7 @@ use bevy::{
     },
 };
 
-use bevy_ghx_destruction::{slicing::slicing::slice_mesh, types::Plane};
+use bevy_ghx_destruction::{slicing::slicing::{fragment_mesh, slice_mesh}, types::Plane};
 use bevy_mod_billboard::plugin::BillboardPlugin;
 use bevy_mod_raycast::prelude::*;
 use bevy_rapier3d::{
@@ -39,6 +39,7 @@ fn main() {
         })
         .add_event::<SpawnSliceableEvent>()
         .add_event::<SliceEvent>()
+        .add_event::<FragmenterEvent>()
         .add_plugins((ExamplesPlugin, BillboardPlugin))
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugins(DefaultRaycastingPlugin)
@@ -50,6 +51,7 @@ fn main() {
                 slice_from_mouse,
                 key_mapping,
                 spawn_sliceable_object,
+                spawn_fragmented_object,
                 // spawn_slice,
             )
                 .chain(),
@@ -62,6 +64,9 @@ struct SliceMesh;
 
 #[derive(Event)]
 struct SpawnSliceableEvent;
+
+#[derive(Event)]
+struct FragmenterEvent;
 
 #[derive(Event)]
 struct SliceEvent {
@@ -165,7 +170,7 @@ fn slice_from_mouse(
                 &mut materials,
                 &mut meshes_assets,
                 &mut commands,
-                slice_center,
+                //slice_center,
             );
         }
     }
@@ -175,6 +180,7 @@ fn key_mapping(
     mut commands: Commands,
     key: Res<ButtonInput<KeyCode>>,
     mut spawn_sliceable_events: EventWriter<SpawnSliceableEvent>,
+    mut spawn_fragmenter_events: EventWriter<FragmenterEvent>,
     query_despawn1: Query<Entity, With<Sliced>>,
     query_despawn2: Query<Entity, With<SliceableObject>>,
 ) {
@@ -187,6 +193,22 @@ fn key_mapping(
         for entity in query_despawn2.iter() {
             commands.entity(entity).despawn();
         }
+    }
+    else if key.just_pressed(KeyCode::KeyH) {
+        spawn_fragmenter_events.send(FragmenterEvent);
+    }
+}
+
+fn spawn_fragmented_object(
+    mut commands: Commands,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut meshes_assets: ResMut<Assets<Mesh>>,
+    mut spawn_fragmenter_events: EventReader<FragmenterEvent>,
+) {
+    for _ in spawn_fragmenter_events.read() {
+        let mesh = Cylinder::new(1.0, 5.0).mesh().build();
+        let fragments = fragment_mesh(&mesh, 10);
+        spawn_fragment(fragments.into(), &mut materials, &mut meshes_assets, &mut commands);
     }
 }
 
@@ -220,10 +242,10 @@ fn spawn_fragment(
     materials: &mut ResMut<Assets<StandardMaterial>>,
     meshes_assets: &mut ResMut<Assets<Mesh>>,
     commands: &mut Commands,
-    pos: Vec3,
 ) {
     //Spawn the fragment for each mesh
     for mesh in meshes {
+        let pos = mesh.compute_aabb().unwrap().center;
         let mesh_handle = meshes_assets.add(mesh.clone());
         commands.spawn((
             PbrBundle {
@@ -238,7 +260,7 @@ fn spawn_fragment(
                 color: Color::GREEN,
             },
             RigidBody::Dynamic,
-            Collider::from_bevy_mesh(&mesh, &ComputedColliderShape::ConvexHull).unwrap(),
+            //Collider::from_bevy_mesh(&mesh, &ComputedColliderShape::ConvexHull).unwrap(),
             ActiveCollisionTypes::default(),
             Friction::coefficient(0.7),
             Restitution::coefficient(0.05),

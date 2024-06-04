@@ -1,7 +1,9 @@
+use std::collections::VecDeque;
+
 use bevy::{
     asset::{Assets, Handle},
     ecs::system::{Commands, ResMut},
-    math::{Vec2, Vec3, Vec3A},
+    math::{Vec3, Vec3A},
     pbr::{
         wireframe::{Wireframe, WireframeColor},
         PbrBundle, StandardMaterial,
@@ -17,6 +19,7 @@ use bevy_rapier3d::{
         Restitution,
     },
 };
+use glam::Vec2;
 
 use crate::{
     types::{CutDirection, MeshBuilder, Plane},
@@ -26,6 +29,33 @@ use ghx_constrained_delaunay::{
     constrained_triangulation::ConstrainedTriangulationConfiguration,
     types::{Edge, IndexType, VertexId},
 };
+
+pub fn fragment_mesh(
+    mesh: &Mesh,
+    fragment_nbr: usize,
+) -> VecDeque<Mesh> {
+    let mut fragments = VecDeque::new();
+    fragments.push_front(mesh.clone());
+
+    for _ in 0..fragment_nbr-1 {
+        let fragment = fragments.pop_front().unwrap();
+        // Mesh center
+        let mesh_center = fragment.compute_aabb().unwrap().center;
+
+        // Random normalized vector for the cut plane
+        let normal_vec = get_random_normalized_vec();
+
+        // Plane from point and normal
+        let plane = Plane::new(mesh_center, normal_vec);
+
+        let (fragment_top, fragment_bottom) = slice_mesh(plane, &fragment);
+
+        fragments.push_front(fragment_top);
+        fragments.push_front(fragment_bottom);
+    }
+
+    fragments
+}
 
 /// Operate the slice on a mesh and spawn fragments
 pub fn slice(
@@ -125,23 +155,23 @@ fn fill_cut_face(
 
     let planar_vertices = transform_to_2d_planar_coordinate_system(&mut vertices, -plane.normal());
 
-    // let triangulation_vertices: Vec<(f64, f64)> = planar_vertices
-    //     .iter()
-    //     .map(|v| (v.x.into(), v.y.into()))
-    //     .collect();
+    let triangulation_vertices: Vec<(f64, f64)> = planar_vertices
+        .iter()
+        .map(|v| (v.x.into(), v.y.into()))
+        .collect();
 
-    // let mut constraints: Vec<(VertexId, VertexId)> = Vec::new();
-    // for edge in top_mesh_builder.constraints().iter() {
-    //     constraints.push((edge.from, edge.to));
-    // }
+    let mut constraints: Vec<(usize, usize)> = Vec::new();
+    for edge in top_mesh_builder.constraints().iter() {
+        constraints.push((edge.from as usize, edge.to as usize));
+    }
 
-    // let triangulation = cdt::triangulate_with_edges(&triangulation_vertices, &constraints).unwrap();
+    let triangulation = cdt::triangulate_with_edges(&triangulation_vertices, &constraints).unwrap();
 
-    let triangulation = ghx_constrained_delaunay::constrained_triangulation_from_2d_vertices(
-        &planar_vertices,
-        top_mesh_builder.constraints(),
-        ConstrainedTriangulationConfiguration::default(),
-    );
+    // let triangulation = ghx_constrained_delaunay::constrained_triangulation_from_2d_vertices(
+    //     &planar_vertices,
+    //     top_mesh_builder.constraints(),
+    //     ConstrainedTriangulationConfiguration::default(),
+    // );
 
     //TODO: get the factor from triangulation
     let (mut x_min, mut y_min, mut x_max, mut y_max) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
@@ -183,13 +213,20 @@ fn fill_cut_face(
     // We need to add the sliced triangles after the non sliced triangles
     let top_slice = top_mesh_builder.vertices().len() as IndexType;
     let bottom_slice = bottom_mesh_builder.vertices().len() as IndexType;
-    for &[t1, t2, t3] in triangulation.triangles.iter() {
+    // for &[t1, t2, t3] in triangulation.triangles.iter() {
+    //     // We need to change the orientation of the triangles for one of the cut face:
+    //     top_mesh_builder.push_triangle(top_slice + t1, top_slice + t2, top_slice + t3);
+    //     bottom_mesh_builder.push_triangle(bottom_slice + t1, bottom_slice + t3, bottom_slice + t2);
+    // }
+
+    for (t1, t2, t3) in triangulation.iter() {
         // We need to change the orientation of the triangles for one of the cut face:
-        top_mesh_builder.push_triangle(top_slice + t1, top_slice + t2, top_slice + t3);
-        bottom_mesh_builder.push_triangle(bottom_slice + t1, bottom_slice + t3, bottom_slice + t2);
+        top_mesh_builder.push_triangle(top_slice + (*t1 as u64), top_slice + (*t2 as u64), top_slice + (*t3 as u64));
+        bottom_mesh_builder.push_triangle(top_slice + (*t1 as u64), top_slice + (*t3 as u64), top_slice + (*t2 as u64));
     }
 }
 
+// TODO: pub funct transform_to_2d_planar_coordinate_system from triangulation
 fn transform_to_2d_planar_coordinate_system(
     vertices: &mut Vec<Vec3A>,
     plane_normal: Vec3A,
@@ -352,7 +389,7 @@ fn spawn_fragment_internal(
     ));
 }
 
-/// if two edges on top:
+/// if two vertices on top:
 ///```text
 ///  1-----------------2
 ///   |              |
@@ -363,7 +400,7 @@ fn spawn_fragment_internal(
 ///           3
 ///```
 ///
-/// if two edges bellow:
+/// if two vertices below:
 ///```text
 ///           3
 ///           |
