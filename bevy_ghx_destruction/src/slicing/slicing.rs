@@ -22,7 +22,7 @@ use bevy_rapier3d::{
 use glam::Vec2;
 
 use crate::{
-    types::{CutDirection, MeshBuilder, Plane},
+    types::{CutDirection, MeshBuilder, MeshBuilderVertex, Plane},
     utils::{find_intersection_line_plane_bis_bis, get_random_normalized_vec, is_above_plane},
 };
 use ghx_constrained_delaunay::{
@@ -30,14 +30,11 @@ use ghx_constrained_delaunay::{
     types::{Edge, IndexType, VertexId},
 };
 
-pub fn fragment_mesh(
-    mesh: &Mesh,
-    fragment_nbr: usize,
-) -> VecDeque<Mesh> {
+pub fn fragment_mesh(mesh: &Mesh, fragment_nbr: usize) -> VecDeque<Mesh> {
     let mut fragments = VecDeque::new();
     fragments.push_front(mesh.clone());
 
-    for _ in 0..fragment_nbr-1 {
+    for _ in 0..fragment_nbr - 1 {
         let fragment = fragments.pop_front().unwrap();
         // Mesh center
         let mesh_center = fragment.compute_aabb().unwrap().center;
@@ -221,8 +218,16 @@ fn fill_cut_face(
 
     for (t1, t2, t3) in triangulation.iter() {
         // We need to change the orientation of the triangles for one of the cut face:
-        top_mesh_builder.push_triangle(top_slice + (*t1 as u64), top_slice + (*t2 as u64), top_slice + (*t3 as u64));
-        bottom_mesh_builder.push_triangle(top_slice + (*t1 as u64), top_slice + (*t3 as u64), top_slice + (*t2 as u64));
+        top_mesh_builder.push_triangle(
+            top_slice + (*t1 as u64),
+            top_slice + (*t2 as u64),
+            top_slice + (*t3 as u64),
+        );
+        bottom_mesh_builder.push_triangle(
+            bottom_slice + (*t1 as u64),
+            bottom_slice + (*t3 as u64),
+            bottom_slice + (*t2 as u64),
+        );
     }
 }
 
@@ -419,9 +424,21 @@ fn split_small_triangles(
     mesh_builder: &mut MeshBuilder,
 ) {
     // Vertices of the current triangle crossed by the slicing plane
-    let v1 = mesh_builder.vertices()[vertex_indexes[0] as usize];
-    let v2 = mesh_builder.vertices()[vertex_indexes[1] as usize];
-    let v3 = mesh_builder.vertices()[vertex_indexes[2] as usize];
+    // let v1 = mesh_builder.vertices()[vertex_indexes[0] as usize];
+    // let v2 = mesh_builder.vertices()[vertex_indexes[1] as usize];
+    // let v3 = mesh_builder.vertices()[vertex_indexes[2] as usize];
+
+    let mut v = vec![MeshBuilderVertex::new(Vec3A::ZERO, Vec2::ZERO, Vec3A::ZERO); 3];
+
+    for vertex_id in vertex_indexes.iter() {
+        let v_id = *vertex_id as usize;
+        if v_id < mesh_builder.vertices().len() {
+            v[v_id] = mesh_builder.vertices()[vertex_indexes[0] as usize];
+        } else {
+            v[v_id] = mesh_builder.sliced_vertices()
+                [vertex_indexes[0] as usize - mesh_builder.vertices().len()];
+        }
+    }
 
     let interection_result_13;
     let intersection_result_23;
@@ -429,27 +446,27 @@ fn split_small_triangles(
     // a*b is not equal to b*a for floats, so we need to take in count the edges orientation when calculating the plane-edges intersections
     if two_edges_on_top {
         interection_result_13 = find_intersection_line_plane_bis_bis(
-            v1.pos(),
-            v3.pos(),
+            v[0].pos(),
+            v[2].pos(),
             plane.origin(),
             plane.normal(),
         );
         intersection_result_23 = find_intersection_line_plane_bis_bis(
-            v2.pos(),
-            v3.pos(),
+            v[1].pos(),
+            v[2].pos(),
             plane.origin(),
             plane.normal(),
         );
     } else {
         interection_result_13 = find_intersection_line_plane_bis_bis(
-            v3.pos(),
-            v1.pos(),
+            v[2].pos(),
+            v[0].pos(),
             plane.origin(),
             plane.normal(),
         );
         intersection_result_23 = find_intersection_line_plane_bis_bis(
-            v3.pos(),
-            v2.pos(),
+            v[2].pos(),
+            v[1].pos(),
             plane.origin(),
             plane.normal(),
         );
@@ -463,10 +480,10 @@ fn split_small_triangles(
         (Some(_), None) => (),
         (Some((v13, s13)), Some((v23, s23))) => {
             // /!\ Interpolate normals and UV coordinates
-            let norm13 = (v1.normal() + s13 * (v3.normal() - v1.normal())).normalize();
-            let norm23 = (v2.normal() + s23 * (v3.normal() - v2.normal())).normalize();
-            let uv13 = v1.uv() + s13 * (v3.uv() - v1.uv());
-            let uv23: Vec2 = v2.uv() + s23 * (v3.uv() - v2.uv());
+            let norm13 = (v[0].normal() + s13 * (v[2].normal() - v[0].normal())).normalize();
+            let norm23 = (v[1].normal() + s23 * (v[2].normal() - v[1].normal())).normalize();
+            let uv13 = v[0].uv() + s13 * (v[2].uv() - v[0].uv());
+            let uv23: Vec2 = v[1].uv() + s23 * (v[2].uv() - v[1].uv());
 
             // Adding the new vertices to each mesh builders
             top_mesh_builder.add_sliced_vertex(v13, uv13, norm13);
