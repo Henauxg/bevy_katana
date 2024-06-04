@@ -8,7 +8,10 @@ use bevy::{
     },
 };
 
-use bevy_ghx_destruction::{slicing::slicing::{fragment_mesh, slice_mesh}, types::Plane};
+use bevy_ghx_destruction::{
+    slicing::slicing::{fragment_mesh, slice_mesh},
+    types::Plane,
+};
 use bevy_mod_billboard::plugin::BillboardPlugin;
 use bevy_mod_raycast::prelude::*;
 use bevy_rapier3d::{
@@ -193,8 +196,7 @@ fn key_mapping(
         for entity in query_despawn2.iter() {
             commands.entity(entity).despawn();
         }
-    }
-    else if key.just_pressed(KeyCode::KeyH) {
+    } else if key.just_pressed(KeyCode::KeyH) {
         spawn_fragmenter_events.send(FragmenterEvent);
     }
 }
@@ -207,8 +209,16 @@ fn spawn_fragmented_object(
 ) {
     for _ in spawn_fragmenter_events.read() {
         let mesh = Cylinder::new(1.0, 5.0).mesh().build();
+
+        //let mesh = Cuboid::new(1., 1., 1.).mesh();
+
         let fragments = fragment_mesh(&mesh, 10);
-        spawn_fragment(fragments.into(), &mut materials, &mut meshes_assets, &mut commands);
+        spawn_fragment(
+            fragments.into(),
+            &mut materials,
+            &mut meshes_assets,
+            &mut commands,
+        );
     }
 }
 
@@ -250,7 +260,7 @@ fn spawn_fragment(
         commands.spawn((
             PbrBundle {
                 mesh: mesh_handle.clone(),
-                transform: Transform::from_xyz(pos.x, pos.y, pos.z),
+                transform: Transform::from_xyz(pos.x, pos.y + 20., pos.z),
                 material: materials.add(Color::rgb_u8(124, 144, 255)),
                 ..default()
             },
@@ -260,7 +270,7 @@ fn spawn_fragment(
                 color: Color::GREEN,
             },
             RigidBody::Dynamic,
-            //Collider::from_bevy_mesh(&mesh, &ComputedColliderShape::ConvexHull).unwrap(),
+            Collider::from_bevy_mesh(&mesh, &ComputedColliderShape::ConvexHull).unwrap(),
             ActiveCollisionTypes::default(),
             Friction::coefficient(0.7),
             Restitution::coefficient(0.05),
