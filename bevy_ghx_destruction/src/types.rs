@@ -24,6 +24,7 @@ impl Indexable for Indices {
 pub enum CutDirection {
     Top,
     Bottom,
+    OnPlane,
     Unknow,
 }
 

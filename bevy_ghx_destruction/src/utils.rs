@@ -39,24 +39,14 @@ pub fn find_intersection_line_plane(
 }
 
 //todo:voir si colineaire ok
-// pub fn is_above_plane(point: Vec3A, plane: Plane) -> CutDirection {
-//     let vector_to_plane = (point - plane.origin()).normalize();
-//     let distance = -vector_to_plane.dot(plane.normal());
-//     if distance < 0. {
-//         return CutDirection::Top;
-//     }
-
-//     CutDirection::Bottom
-// }
-
 pub fn is_above_plane(point: Vec3A, plane: Plane) -> CutDirection {
-    if (plane.normal().x * (point.x - plane.origin().x)
-        + plane.normal().y * (point.y - plane.origin().y)
-        + plane.normal().z * (point.z - plane.origin().z))
-        >= 0.
-    {
+    let vector_to_plane = (point - plane.origin()).normalize();
+    let distance = -vector_to_plane.dot(plane.normal());
+    if distance < 0. {
         return CutDirection::Top;
+    } else if distance.is_nan() {
+        return CutDirection::OnPlane;
     }
 
-    return CutDirection::Bottom;
+    CutDirection::Bottom
 }
