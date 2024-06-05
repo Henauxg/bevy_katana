@@ -95,12 +95,23 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes_assets: ResMut<Assets<Mesh>>,
 ) {
+    // commands.spawn((
+    //     SliceMesh,
+    //     PbrBundle {
+    //         mesh: meshes_assets.add(Cylinder::new(1.0, 5.0)),
+    //         material: materials.add(Color::rgb_u8(124, 144, 255)),
+    //         transform: Transform::from_xyz(5.0, 20., 0.0),
+    //         ..default()
+    //     },
+    //     SliceableObject,
+    // ));
+
     commands.spawn((
         SliceMesh,
         PbrBundle {
-            mesh: meshes_assets.add(Cylinder::new(1.0, 5.0)),
+            mesh: meshes_assets.add(Cuboid::new(1.0, 1.0, 1.0)),
             material: materials.add(Color::rgb_u8(124, 144, 255)),
-            transform: Transform::from_xyz(5.0, 20., 0.0),
+            transform: Transform::from_xyz(5.0, 0.5, 0.0),
             ..default()
         },
         SliceableObject,
@@ -144,36 +155,61 @@ fn raycast(
 fn slice_from_mouse(
     mut materials: ResMut<Assets<StandardMaterial>>,
     cameras: Query<&mut Transform, With<Camera>>,
-    meshes_handle: Query<&Handle<Mesh>, With<SliceableObject>>,
+    sliceables: Query<
+        (&Transform, &GlobalTransform, &Handle<Mesh>),
+        (With<SliceableObject>, Without<Camera>),
+    >,
     mut meshes_assets: ResMut<Assets<Mesh>>,
     mut commands: Commands,
     mut spawn_sliceable_events: EventReader<SliceEvent>,
 ) {
     let camera_tranform = cameras.single();
     for event in spawn_sliceable_events.read() {
-        if let Ok(mesh_handle) = meshes_handle.get(event.entity) {
-            // TODO
-            let slice_center = 0.5 * (event.begin + event.end);
-
-            let qr = event.begin - camera_tranform.translation;
-            let qs = event.end - camera_tranform.translation;
-
+        if let Ok((transform, global_transform, mesh_handle)) = sliceables.get(event.entity) {
             let mesh = meshes_assets.get(mesh_handle).unwrap();
 
-            // TODO: normal
-            let plane = Plane::new(Vec3A::from(slice_center), Vec3A::from(qr.cross(qs)));
+            let slice_center = Vec3A::from(transform.translation);
 
-            let (top_mesh, bottom_mesh) = slice_mesh(plane, &mesh);
+            let qr: Vec3 = event.begin - camera_tranform.translation;
+            let qs = event.end - camera_tranform.translation;
+
+            //            let plane_normal = qr.cross(qs).normalize();
+
+            let local_begin = global_transform.transform_point(event.begin);
+            let local_end = global_transform.transform_point(event.end);
+
+            let local_cam = global_transform.transform_point(camera_tranform.translation);
+            let local_qr = local_begin - local_cam;
+            let local_qs = local_end - local_cam;
+
+            let local_normal = local_qr.cross(local_qs).normalize();
+
+            // let plane_normal = ;
+
+            let plane = Plane::new(local_begin.into(), local_normal.into());
+
+            info!("plane {:?}", plane);
+
+            let meshes = slice_mesh(plane, &mesh);
 
             commands.entity(event.entity).despawn();
 
-            // TODO: spawn pos && rot
+            commands.spawn((
+                PbrBundle {
+                    mesh: meshes_assets.add(Plane3d::new(qr.cross(qs))),
+                    transform: Transform::from_translation(event.begin),
+                    material: materials.add(Color::rgb_u8(124, 144, 255)),
+                    ..default()
+                },
+                SliceableObject,
+            ));
+
             spawn_fragment(
-                vec![top_mesh, bottom_mesh],
+                meshes,
                 &mut materials,
                 &mut meshes_assets,
                 &mut commands,
-                //slice_center,
+                slice_center,
             );
         }
     }
@@ -208,9 +244,9 @@ fn spawn_fragmented_object(
     mut spawn_fragmenter_events: EventReader<FragmenterEvent>,
 ) {
     for _ in spawn_fragmenter_events.read() {
-        let mesh = Cylinder::new(1.0, 5.0).mesh().build();
+        //let mesh = Cylinder::new(1.0, 5.0).mesh().build();
 
-        //let mesh = Cuboid::new(1., 1., 1.).mesh();
+        let mesh = Cuboid::new(1., 1., 1.).mesh();
 
         let fragments = fragment_mesh(&mesh, 10);
         spawn_fragment(
@@ -218,6 +254,7 @@ fn spawn_fragmented_object(
             &mut materials,
             &mut meshes_assets,
             &mut commands,
+            mesh.compute_aabb().unwrap().center,
         );
     }
 }
@@ -237,9 +274,10 @@ fn spawn_sliceable_object(
         commands.spawn((
             SliceMesh,
             PbrBundle {
-                mesh: meshes_assets.add(Cylinder::new(1.0, 5.0)),
+                //mesh: meshes_assets.add(Cylinder::new(1.0, 5.0)),
+                mesh: meshes_assets.add(Cuboid::new(1.0, 1.0, 1.0)),
                 material: materials.add(Color::rgb_u8(124, 144, 255)),
-                transform: Transform::from_xyz(5.0, 20., 0.0),
+                transform: Transform::from_xyz(5.0, 0.5, 0.0),
                 ..default()
             },
             SliceableObject,
@@ -252,15 +290,15 @@ fn spawn_fragment(
     materials: &mut ResMut<Assets<StandardMaterial>>,
     meshes_assets: &mut ResMut<Assets<Mesh>>,
     commands: &mut Commands,
+    pos: Vec3A,
 ) {
     //Spawn the fragment for each mesh
     for mesh in meshes {
-        let pos = mesh.compute_aabb().unwrap().center;
         let mesh_handle = meshes_assets.add(mesh.clone());
         commands.spawn((
             PbrBundle {
                 mesh: mesh_handle.clone(),
-                transform: Transform::from_xyz(pos.x, pos.y + 20., pos.z),
+                transform: Transform::from_xyz(pos.x, pos.y, pos.z),
                 material: materials.add(Color::rgb_u8(124, 144, 255)),
                 ..default()
             },

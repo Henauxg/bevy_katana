@@ -118,11 +118,10 @@ impl MeshBuilder {
     pub fn new_from(mesh_mapping: &MeshBuilder) -> MeshBuilder {
         MeshBuilder::new_from_mesh_builder(
             mesh_mapping.vertices().len() + mesh_mapping.sliced_vertices().len(),
-            mesh_mapping.triangles().len(),
         )
     }
 
-    pub fn new_from_mesh_builder(vertex_count: usize, triangles_count: usize) -> MeshBuilder {
+    pub fn new_from_mesh_builder(vertex_count: usize) -> MeshBuilder {
         MeshBuilder {
             vertices: Vec::new(),
             sliced_vertices: Vec::new(),

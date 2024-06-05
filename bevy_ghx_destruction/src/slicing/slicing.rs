@@ -25,10 +25,7 @@ use glam::Vec2;
 
 use crate::{
     types::{CutDirection, MeshBuilder, MeshBuilderVertex, Plane},
-    utils::{
-        find_intersection_line_plane, get_random_normalized_vec, is_above_plane,
-        is_triangle_on_plane, on_plane_triangle, TriangleOnPlane,
-    },
+    utils::{find_intersection_line_plane, get_random_normalized_vec, is_above_plane},
 };
 use ghx_constrained_delaunay::{
     constrained_triangulation::ConstrainedTriangulationConfiguration,
@@ -50,10 +47,9 @@ pub fn fragment_mesh(mesh: &Mesh, fragment_nbr: usize) -> VecDeque<Mesh> {
         // Plane from point and normal
         let plane = Plane::new(mesh_center, normal_vec);
 
-        let (fragment_top, fragment_bottom) = slice_mesh(plane, &fragment);
+        let meshes = slice_mesh(plane, &fragment);
 
-        fragments.push_front(fragment_top);
-        fragments.push_front(fragment_bottom);
+        fragments.extend(meshes);
     }
 
     fragments
@@ -79,33 +75,35 @@ pub fn slice(
     let plane = Plane::new(mesh_center, normal_vec);
 
     // Execute the slice
-    let (top_mesh, bottom_mesh) = slice_mesh(plane, mesh);
+    let meshes = slice_mesh(plane, mesh);
 
     // Spawn the fragments from the meshes at the pos
-    spawn_fragment(
-        vec![top_mesh, bottom_mesh],
-        plane.origin(),
-        materials,
-        meshes_assets,
-        commands,
-    );
+    spawn_fragment(meshes, plane.origin(), materials, meshes_assets, commands);
 }
 
 /// Operate the slice on a mesh
-pub fn slice_mesh(plane: Plane, mesh: &Mesh) -> (Mesh, Mesh) {
+pub fn slice_mesh(plane: Plane, mesh: &Mesh) -> Vec<Mesh> {
     // Convert mesh into mesh builder to get easier access to mesh attributes
     let mut mesh_builder = MeshBuilder::mesh_mapping_from_mesh(mesh);
 
     // Split in half the mesh builder into top and bottom mesh builders
-    let (top_mesh_builder, bottom_mesh_builder) = cut_mesh_mapping(plane, &mut mesh_builder);
-
-    (
-        top_mesh_builder.create_mesh(),
-        bottom_mesh_builder.create_mesh(),
-    )
+    match cut_mesh_mapping(plane, &mut mesh_builder) {
+        (None, None) => return Vec::new(),
+        (None, Some(bottom_mesh_builder)) => return vec![bottom_mesh_builder.create_mesh()],
+        (Some(top_mesh_builder), None) => return vec![top_mesh_builder.create_mesh()],
+        (Some(top_mesh_builder), Some(bottom_mesh_builder)) => {
+            return vec![
+                top_mesh_builder.create_mesh(),
+                bottom_mesh_builder.create_mesh(),
+            ]
+        }
+    }
 }
 
-fn cut_mesh_mapping(plane: Plane, mesh_builder: &mut MeshBuilder) -> (MeshBuilder, MeshBuilder) {
+fn cut_mesh_mapping(
+    plane: Plane,
+    mesh_builder: &mut MeshBuilder,
+) -> (Option<MeshBuilder>, Option<MeshBuilder>) {
     // Track the position of the vertices along the slice plane
     let mut sides = vec![
         CutDirection::Unknow;
@@ -154,11 +152,16 @@ fn cut_mesh_mapping(plane: Plane, mesh_builder: &mut MeshBuilder) -> (MeshBuilde
         &mut top_mesh_builder,
         &mut bottom_mesh_builder,
     );
+    if top_mesh_builder.vertices().len() == 0 {
+        return (None, Some(bottom_mesh_builder));
+    } else if bottom_mesh_builder.vertices().len() == 0 {
+        return (Some(top_mesh_builder), None);
+    } else {
+        // Fill the cut face newly created
+        fill_cut_face(&plane, &mut top_mesh_builder, &mut bottom_mesh_builder);
 
-    // Fill the cut face newly created
-    fill_cut_face(&plane, &mut top_mesh_builder, &mut bottom_mesh_builder);
-
-    (top_mesh_builder, bottom_mesh_builder)
+        (Some(top_mesh_builder), Some(bottom_mesh_builder))
+    }
 }
 
 //todo: clean with our triangulation
@@ -432,6 +435,176 @@ fn spawn_fragment_internal(
         Friction::coefficient(0.7),
         Restitution::coefficient(0.05),
         ColliderMassProperties::Density(2.0),
+    ));
+}
+
+#[derive(PartialEq)]
+pub enum TriangleOnPlane {
+    OnPlane(Vec<usize>),
+    OutOfPlane,
+}
+
+pub fn is_triangle_on_plane(side: &Vec<CutDirection>, vertices: [u64; 3]) -> TriangleOnPlane {
+    let on_plane: Vec<usize> = vertices
+        .iter()
+        .enumerate()
+        .filter_map(|(j, &v)| {
+            if side[v as usize] == CutDirection::OnPlane {
+                Some(j)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if on_plane.len() == 0 {
+        return TriangleOnPlane::OutOfPlane;
+    } else {
+        return TriangleOnPlane::OnPlane(on_plane);
+    }
+}
+
+pub fn on_plane_triangle(
+    top_mesh_builder: &mut MeshBuilder,
+    bottom_mesh_builder: &mut MeshBuilder,
+    side: &Vec<CutDirection>,
+    vertices: [u64; 3],
+    on_plane: Vec<usize>,
+    mesh_builder: &MeshBuilder,
+    plane: Plane,
+) {
+    if on_plane.len() == 1 {
+        let out_of_plane_vertices: Vec<u64> = vertices
+            .iter()
+            .enumerate()
+            .filter_map(|(j, &v)| if j != on_plane[0] { Some(v) } else { None })
+            .collect();
+
+        if side[out_of_plane_vertices[0] as usize] == CutDirection::Top
+            && side[out_of_plane_vertices[1] as usize] == CutDirection::Top
+        {
+            top_mesh_builder.push_mapped_triangle(vertices[0], vertices[1], vertices[2]);
+        }
+        if side[out_of_plane_vertices[0] as usize] == CutDirection::Bottom
+            && side[out_of_plane_vertices[1] as usize] == CutDirection::Bottom
+        {
+            bottom_mesh_builder.push_mapped_triangle(vertices[0], vertices[1], vertices[2]);
+        }
+        if side[out_of_plane_vertices[0] as usize] == CutDirection::Bottom
+            && side[out_of_plane_vertices[1] as usize] == CutDirection::Top
+        {
+            split_on_plane_triangle(
+                top_mesh_builder,
+                bottom_mesh_builder,
+                [
+                    vertices[on_plane[0]],
+                    out_of_plane_vertices[1],
+                    out_of_plane_vertices[0],
+                ],
+                mesh_builder,
+                plane,
+            );
+        }
+        if side[out_of_plane_vertices[0] as usize] == CutDirection::Top
+            && side[out_of_plane_vertices[1] as usize] == CutDirection::Bottom
+        {
+            split_on_plane_triangle(
+                top_mesh_builder,
+                bottom_mesh_builder,
+                [
+                    vertices[on_plane[0]],
+                    out_of_plane_vertices[0],
+                    out_of_plane_vertices[1],
+                ],
+                mesh_builder,
+                plane,
+            );
+        }
+    } else {
+        let out_of_plane_vertex: Vec<u64> = vertices
+            .iter()
+            .enumerate()
+            .filter_map(|(j, &v)| {
+                if j != on_plane[0] || j != on_plane[1] {
+                    Some(v)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if side[out_of_plane_vertex[0] as usize] == CutDirection::Top {
+            top_mesh_builder.push_mapped_triangle(vertices[0], vertices[1], vertices[2]);
+        }
+
+        if side[out_of_plane_vertex[0] as usize] == CutDirection::Bottom {
+            bottom_mesh_builder.push_mapped_triangle(vertices[0], vertices[1], vertices[2]);
+        }
+    }
+}
+
+///            * top
+///         /  |
+///       /    |
+///    --*-----m-- plane
+///       \    |
+///         \  |
+///            * bottom
+fn split_on_plane_triangle(
+    top_mesh_builder: &mut MeshBuilder,
+    bottom_mesh_builder: &mut MeshBuilder,
+    vertices: [u64; 3],
+    mesh_builder: &MeshBuilder,
+    plane: Plane,
+) {
+    info!("split_on_plane_triangle");
+    // The vertices list is given as [on plane, top, bottom]:
+    let mut v = vec![MeshBuilderVertex::new(Vec3A::ZERO, Vec2::ZERO, Vec3A::ZERO); 3];
+
+    for (i, vertex_id) in vertices.iter().enumerate() {
+        let v_id = *vertex_id as usize;
+        if v_id < mesh_builder.vertices().len() {
+            v[i] = mesh_builder.vertices()[v_id as usize];
+        } else {
+            v[i] = mesh_builder.sliced_vertices()[v_id as usize - mesh_builder.vertices().len()];
+        }
+    }
+
+    let (m, s) =
+        find_intersection_line_plane(v[1].pos(), v[2].pos(), plane.origin(), plane.normal())
+            .unwrap();
+    let norm = (v[1].normal() + s * (v[2].normal() - v[1].normal())).normalize();
+    let uv: Vec2 = v[1].uv() + s * (v[2].uv() - v[1].uv());
+
+    top_mesh_builder.add_sliced_vertex(m, uv, norm);
+    bottom_mesh_builder.add_sliced_vertex(m, uv, norm);
+
+    let id_top = top_mesh_builder.vertices().len() as VertexId - 1;
+    let id_bottom = bottom_mesh_builder.vertices().len() as VertexId - 1;
+
+    top_mesh_builder.push_triangle(
+        id_top,
+        top_mesh_builder.index_map()[vertices[0] as usize],
+        top_mesh_builder.index_map()[vertices[1] as usize],
+    );
+
+    top_mesh_builder.push_triangle(
+        id_bottom,
+        top_mesh_builder.index_map()[vertices[2] as usize],
+        top_mesh_builder.index_map()[vertices[0] as usize],
+    );
+
+    let top_sliced_vertices_nbr = top_mesh_builder.sliced_vertices().len() as VertexId;
+    let bottom_sliced_vertices_nbr = bottom_mesh_builder.sliced_vertices().len() as VertexId;
+
+    // Need to be carfull with constrained edges orientation:
+    top_mesh_builder.constraints_mut().push(Edge::new(
+        top_sliced_vertices_nbr - 2,
+        top_sliced_vertices_nbr - 1,
+    ));
+    bottom_mesh_builder.constraints_mut().push(Edge::new(
+        bottom_sliced_vertices_nbr - 1,
+        bottom_sliced_vertices_nbr - 2,
     ));
 }
 
