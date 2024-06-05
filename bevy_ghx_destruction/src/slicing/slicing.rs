@@ -9,6 +9,7 @@ use bevy::{
         wireframe::{Wireframe, WireframeColor},
         PbrBundle, StandardMaterial,
     },
+    reflect::List,
     render::{color::Color, mesh::Mesh},
     transform::components::Transform,
     utils::default,
@@ -24,7 +25,10 @@ use glam::Vec2;
 
 use crate::{
     types::{CutDirection, MeshBuilder, MeshBuilderVertex, Plane},
-    utils::{find_intersection_line_plane, get_random_normalized_vec, is_above_plane},
+    utils::{
+        find_intersection_line_plane, get_random_normalized_vec, is_above_plane,
+        is_triangle_on_plane, on_plane_triangle, TriangleOnPlane,
+    },
 };
 use ghx_constrained_delaunay::{
     constrained_triangulation::ConstrainedTriangulationConfiguration,
@@ -95,7 +99,6 @@ pub fn slice_mesh(plane: Plane, mesh: &Mesh) -> (Mesh, Mesh) {
     // Split in half the mesh builder into top and bottom mesh builders
     let (top_mesh_builder, bottom_mesh_builder) = cut_mesh_mapping(plane, &mut mesh_builder);
 
-    info!(" to mesh {:?}", top_mesh_builder);
     (
         top_mesh_builder.create_mesh(),
         bottom_mesh_builder.create_mesh(),
@@ -117,9 +120,12 @@ fn cut_mesh_mapping(plane: Plane, mesh_builder: &mut MeshBuilder) -> (MeshBuilde
     for (index, _) in mesh_builder.vertices().iter().enumerate() {
         let vertex = mesh_builder.vertices()[index];
         sides[index] = is_above_plane(vertex.pos(), plane);
+
+        // Vertices are split from top to bottom. If a vertex isinside the plan, it will be fixed in split triangles
         if sides[index] == CutDirection::Top {
             top_mesh_builder.add_mapped_vertex(vertex, index);
-        } else {
+        }
+        if sides[index] == CutDirection::Bottom {
             bottom_mesh_builder.add_mapped_vertex(vertex, index);
         }
     }
@@ -130,9 +136,12 @@ fn cut_mesh_mapping(plane: Plane, mesh_builder: &mut MeshBuilder) -> (MeshBuilde
     for (index, _) in mesh_builder.sliced_vertices().iter().enumerate() {
         let vertex = mesh_builder.sliced_vertices()[index];
         sides[index + mesh_count] = is_above_plane(vertex.pos(), plane);
+
+        // Vertices are split from top to bottom. If a vertex isinside the plan, it will be fixed in split triangles
         if sides[index + mesh_count] == CutDirection::Top {
             top_mesh_builder.add_mapped_vertex(vertex, index + mesh_count);
-        } else {
+        }
+        if sides[index + mesh_count] == CutDirection::Bottom {
             bottom_mesh_builder.add_mapped_vertex(vertex, index + mesh_count);
         }
     }
@@ -158,19 +167,9 @@ fn fill_cut_face(
     top_mesh_builder: &mut MeshBuilder,
     bottom_mesh_builder: &mut MeshBuilder,
 ) {
-    info!(
-        "top mesh sliced vertices {:?}",
-        top_mesh_builder.sliced_vertices().len()
-    );
-
     // Erease duplicated sliced vertices
     top_mesh_builder.shrink_sliced_vertices();
     bottom_mesh_builder.shrink_sliced_vertices();
-
-    info!(
-        "top mesh sliced vertices {:?}",
-        top_mesh_builder.sliced_vertices().len()
-    );
 
     // Apply the triangulation to the top cut face. No need to do it for the bottom cute face since they both share the same vertices, we will just reverse the normal.
     let mut vertices = Vec::new();
@@ -178,7 +177,8 @@ fn fill_cut_face(
         vertices.push(vertex.pos());
     }
 
-    let planar_vertices = transform_to_2d_planar_coordinate_system(&mut vertices, -plane.normal());
+    let mut planar_vertices =
+        transform_to_2d_planar_coordinate_system(&mut vertices, -plane.normal());
 
     // let triangulation_vertices: Vec<(f64, f64)> = planar_vertices
     //     .iter()
@@ -197,7 +197,7 @@ fn fill_cut_face(
 
     // let triangulation = cdt::triangulate_with_edges(&triangulation_vertices, &constraints).unwrap();
 
-    let triangulation = ghx_constrained_delaunay::constrained_triangulation_from_2d_vertices(
+    let mut triangulation = ghx_constrained_delaunay::constrained_triangulation_from_2d_vertices(
         &planar_vertices,
         top_mesh_builder.constraints(),
         ConstrainedTriangulationConfiguration::default(),
@@ -205,7 +205,7 @@ fn fill_cut_face(
 
     //TODO: get the factor from triangulation
     let (mut x_min, mut y_min, mut x_max, mut y_max) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-    for vertex in planar_vertices.iter() {
+    for vertex in planar_vertices.iter_mut() {
         if vertex.x < x_min {
             x_min = vertex.x;
         }
@@ -243,7 +243,7 @@ fn fill_cut_face(
     // We need to add the sliced triangles after the non sliced triangles
     let top_slice = top_mesh_builder.vertices().len() as IndexType;
     let bottom_slice = bottom_mesh_builder.vertices().len() as IndexType;
-    for &[t1, t2, t3] in triangulation.triangles.iter() {
+    for &mut [t1, t2, t3] in triangulation.triangles.iter_mut() {
         // We need to change the orientation of the triangles for one of the cut face:
         top_mesh_builder.push_triangle(top_slice + t1, top_slice + t2, top_slice + t3);
         bottom_mesh_builder.push_triangle(bottom_slice + t1, bottom_slice + t3, bottom_slice + t2);
@@ -294,94 +294,102 @@ pub fn split_triangles(
 
     for (index, _) in triangles.iter().enumerate().step_by(3) {
         // Vertices of the current triangle
-        let vertex_indexe_1 = triangles[index];
-        let vertex_indexe_2 = triangles[index + 1];
-        let vertex_indexe_3 = triangles[index + 2];
+        let vertex_index_1 = triangles[index];
+        let vertex_index_2 = triangles[index + 1];
+        let vertex_index_3 = triangles[index + 2];
 
         // If the triangle is completly above the slicing plane
-        if side[vertex_indexe_1 as usize] == CutDirection::Top
-            && side[vertex_indexe_2 as usize] == CutDirection::Top
-            && side[vertex_indexe_3 as usize] == CutDirection::Top
+        if side[vertex_index_1 as usize] == CutDirection::Top
+            && side[vertex_index_2 as usize] == CutDirection::Top
+            && side[vertex_index_3 as usize] == CutDirection::Top
         {
-            top_mesh_builder.push_mapped_triangle(
-                vertex_indexe_1,
-                vertex_indexe_2,
-                vertex_indexe_3,
-            );
+            top_mesh_builder.push_mapped_triangle(vertex_index_1, vertex_index_2, vertex_index_3);
         }
         // If the triangle is completly bellow the slicing plane
-        else if side[vertex_indexe_1 as usize] == CutDirection::Bottom
-            && side[vertex_indexe_2 as usize] == CutDirection::Bottom
-            && side[vertex_indexe_3 as usize] == CutDirection::Bottom
+        if side[vertex_index_1 as usize] == CutDirection::Bottom
+            && side[vertex_index_2 as usize] == CutDirection::Bottom
+            && side[vertex_index_3 as usize] == CutDirection::Bottom
         {
             bottom_mesh_builder.push_mapped_triangle(
-                vertex_indexe_1,
-                vertex_indexe_2,
-                vertex_indexe_3,
+                vertex_index_1,
+                vertex_index_2,
+                vertex_index_3,
             );
         }
-        // The triangle is intersecting the slicing plane:
-        else {
-            let mut vertex_indexes: [VertexId; 3] = [0, 0, 0];
-            let mut two_edges_on_top = false;
 
-            //Two vertices above and one below:
-            if side[vertex_indexe_1 as usize] == CutDirection::Top
-                && side[vertex_indexe_2 as usize] == CutDirection::Top
-                && side[vertex_indexe_3 as usize] == CutDirection::Bottom
-            {
-                vertex_indexes = [vertex_indexe_1, vertex_indexe_2, vertex_indexe_3];
-                two_edges_on_top = true;
-            }
-
-            if side[vertex_indexe_1 as usize] == CutDirection::Top
-                && side[vertex_indexe_2 as usize] == CutDirection::Bottom
-                && side[vertex_indexe_3 as usize] == CutDirection::Top
-            {
-                vertex_indexes = [vertex_indexe_3, vertex_indexe_1, vertex_indexe_2];
-                two_edges_on_top = true;
-            }
-
-            if side[vertex_indexe_1 as usize] == CutDirection::Bottom
-                && side[vertex_indexe_2 as usize] == CutDirection::Top
-                && side[vertex_indexe_3 as usize] == CutDirection::Top
-            {
-                vertex_indexes = [vertex_indexe_2, vertex_indexe_3, vertex_indexe_1];
-                two_edges_on_top = true;
-            }
-
-            // Two vertices below and one above:
-            if side[vertex_indexe_1 as usize] == CutDirection::Top
-                && side[vertex_indexe_2 as usize] == CutDirection::Bottom
-                && side[vertex_indexe_3 as usize] == CutDirection::Bottom
-            {
-                vertex_indexes = [vertex_indexe_2, vertex_indexe_3, vertex_indexe_1];
-            }
-
-            if side[vertex_indexe_1 as usize] == CutDirection::Bottom
-                && side[vertex_indexe_2 as usize] == CutDirection::Top
-                && side[vertex_indexe_3 as usize] == CutDirection::Bottom
-            {
-                vertex_indexes = [vertex_indexe_3, vertex_indexe_1, vertex_indexe_2];
-            }
-
-            if side[vertex_indexe_1 as usize] == CutDirection::Bottom
-                && side[vertex_indexe_2 as usize] == CutDirection::Bottom
-                && side[vertex_indexe_3 as usize] == CutDirection::Top
-            {
-                vertex_indexes = [vertex_indexe_1, vertex_indexe_2, vertex_indexe_3];
-            }
-
-            // Subdivide the triangle into three new triangles
-            split_small_triangles(
-                plane,
+        // Match degeneration cases
+        match is_triangle_on_plane(side, [vertex_index_1, vertex_index_2, vertex_index_3]) {
+            TriangleOnPlane::OnPlane(on_plane) => on_plane_triangle(
                 top_mesh_builder,
                 bottom_mesh_builder,
-                vertex_indexes,
-                two_edges_on_top,
-                &mut mesh_builder.clone(),
-            );
-        }
+                side,
+                [vertex_index_1, vertex_index_2, vertex_index_3],
+                on_plane,
+                mesh_builder,
+                plane,
+            ),
+            TriangleOnPlane::OutOfPlane => {
+                let mut vertex_indexes: [VertexId; 3] = [0, 0, 0];
+                let mut two_edges_on_top = false;
+
+                //Two vertices above and one below:
+                if side[vertex_index_1 as usize] == CutDirection::Top
+                    && side[vertex_index_2 as usize] == CutDirection::Top
+                    && side[vertex_index_3 as usize] == CutDirection::Bottom
+                {
+                    vertex_indexes = [vertex_index_1, vertex_index_2, vertex_index_3];
+                    two_edges_on_top = true;
+                }
+
+                if side[vertex_index_1 as usize] == CutDirection::Top
+                    && side[vertex_index_2 as usize] == CutDirection::Bottom
+                    && side[vertex_index_3 as usize] == CutDirection::Top
+                {
+                    vertex_indexes = [vertex_index_3, vertex_index_1, vertex_index_2];
+                    two_edges_on_top = true;
+                }
+
+                if side[vertex_index_1 as usize] == CutDirection::Bottom
+                    && side[vertex_index_2 as usize] == CutDirection::Top
+                    && side[vertex_index_3 as usize] == CutDirection::Top
+                {
+                    vertex_indexes = [vertex_index_2, vertex_index_3, vertex_index_1];
+                    two_edges_on_top = true;
+                }
+
+                // Two vertices below and one above:
+                if side[vertex_index_1 as usize] == CutDirection::Top
+                    && side[vertex_index_2 as usize] == CutDirection::Bottom
+                    && side[vertex_index_3 as usize] == CutDirection::Bottom
+                {
+                    vertex_indexes = [vertex_index_2, vertex_index_3, vertex_index_1];
+                }
+
+                if side[vertex_index_1 as usize] == CutDirection::Bottom
+                    && side[vertex_index_2 as usize] == CutDirection::Top
+                    && side[vertex_index_3 as usize] == CutDirection::Bottom
+                {
+                    vertex_indexes = [vertex_index_3, vertex_index_1, vertex_index_2];
+                }
+
+                if side[vertex_index_1 as usize] == CutDirection::Bottom
+                    && side[vertex_index_2 as usize] == CutDirection::Bottom
+                    && side[vertex_index_3 as usize] == CutDirection::Top
+                {
+                    vertex_indexes = [vertex_index_1, vertex_index_2, vertex_index_3];
+                }
+
+                // Subdivide the triangle into three new triangles
+                split_small_triangles(
+                    plane,
+                    top_mesh_builder,
+                    bottom_mesh_builder,
+                    vertex_indexes,
+                    two_edges_on_top,
+                    &mut mesh_builder.clone(),
+                );
+            }
+        };
     }
 }
 
@@ -456,11 +464,6 @@ fn split_small_triangles(
     two_edges_on_top: bool,
     mesh_builder: &mut MeshBuilder,
 ) {
-    // Vertices of the current triangle crossed by the slicing plane
-    // let v1 = mesh_builder.vertices()[vertex_indexes[0] as usize];
-    // let v2 = mesh_builder.vertices()[vertex_indexes[1] as usize];
-    // let v3 = mesh_builder.vertices()[vertex_indexes[2] as usize];
-
     let mut v = vec![MeshBuilderVertex::new(Vec3A::ZERO, Vec2::ZERO, Vec3A::ZERO); 3];
 
     for (i, vertex_id) in vertex_indexes.iter().enumerate() {
