@@ -66,3 +66,7 @@ path = "src/prefracture/prefracture.rs"
 [[example]]
 name = "slicing"
 path = "src/slicing/slicing.rs"
+
+[[example]]
+name = "joint"
+path = "src/joint.rs"
