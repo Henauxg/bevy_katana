@@ -170,39 +170,35 @@ fn slice_from_mouse(
 
             let slice_center = Vec3A::from(transform.translation);
 
-            let qr: Vec3 = event.begin - camera_tranform.translation;
-            let qs = event.end - camera_tranform.translation;
+            // let qr: Vec3 =
+            //     event.begin - camera_tranform.translation - global_transform.translation();
+            // let qs = event.end - camera_tranform.translation - global_transform.translation();
 
-            //            let plane_normal = qr.cross(qs).normalize();
-
-            let local_begin = global_transform.transform_point(event.begin);
-            let local_end = global_transform.transform_point(event.end);
-
-            let local_cam = global_transform.transform_point(camera_tranform.translation);
+            let inver_trsfrm = global_transform.affine().inverse();
+            let local_cam = inver_trsfrm.matrix3 * Vec3A::from(camera_tranform.translation)
+                + inver_trsfrm.translation;
+            let local_begin =
+                inver_trsfrm.matrix3 * Vec3A::from(event.begin) + inver_trsfrm.translation;
+            let local_end =
+                inver_trsfrm.matrix3 * Vec3A::from(event.end) + inver_trsfrm.translation;
             let local_qr = local_begin - local_cam;
             let local_qs = local_end - local_cam;
 
-            let local_normal = local_qr.cross(local_qs).normalize();
-
-            // let plane_normal = ;
-
-            let plane = Plane::new(local_begin.into(), local_normal.into());
-
-            info!("plane {:?}", plane);
+            let plane = Plane::new(local_begin, (local_qr.cross(local_qs).normalize()).into());
 
             let meshes = slice_mesh(plane, &mesh);
 
             commands.entity(event.entity).despawn();
 
-            commands.spawn((
-                PbrBundle {
-                    mesh: meshes_assets.add(Plane3d::new(qr.cross(qs))),
-                    transform: Transform::from_translation(event.begin),
-                    material: materials.add(Color::rgb_u8(124, 144, 255)),
-                    ..default()
-                },
-                SliceableObject,
-            ));
+            // commands.spawn((
+            //     PbrBundle {
+            //         mesh: meshes_assets.add(Plane3d::new(qr.cross(qs))),
+            //         transform: Transform::from_translation(event.begin),
+            //         material: materials.add(Color::rgb_u8(124, 144, 255)),
+            //         ..default()
+            //     },
+            //     SliceableObject,
+            // ));
 
             spawn_fragment(
                 meshes,
@@ -223,7 +219,7 @@ fn key_mapping(
     query_despawn1: Query<Entity, With<Sliced>>,
     query_despawn2: Query<Entity, With<SliceableObject>>,
 ) {
-    if key.just_pressed(KeyCode::Space) {
+    if key.just_pressed(KeyCode::KeyN) {
         spawn_sliceable_events.send(SpawnSliceableEvent);
     } else if key.just_pressed(KeyCode::Enter) {
         for entity in query_despawn1.iter() {
