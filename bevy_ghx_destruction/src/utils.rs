@@ -1,7 +1,22 @@
-use bevy::math::Vec3A;
-use rand::Rng;
+use bevy::{math::Vec3A, render::primitives::Aabb};
+use rand::{thread_rng, Rng};
 
 use crate::types::{CutDirection, Plane};
+
+fn random_point_from_aabb(aabb: &Aabb) -> Vec3A {
+    let mut rng = thread_rng();
+    Vec3A::new(
+        rng.gen_range(aabb.min().x..=aabb.max().x),
+        rng.gen_range(aabb.min().y..=aabb.max().y),
+        rng.gen_range(aabb.min().z..=aabb.max().z),
+    )
+}
+
+pub fn random_plane(aabb: &Aabb) -> Plane {
+    let point = random_point_from_aabb(aabb);
+    let normal = get_random_normalized_vec();
+    Plane::new(point, normal)
+}
 
 #[inline]
 pub fn get_random_normalized_vec() -> Vec3A {
