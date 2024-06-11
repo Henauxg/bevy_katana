@@ -70,3 +70,7 @@ path = "src/slicing/slicing.rs"
 [[example]]
 name = "joint"
 path = "src/joint.rs"
+
+[[example]]
+name = "fracturing"
+path = "src/fracturing.rs"

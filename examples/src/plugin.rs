@@ -67,7 +67,7 @@ pub struct ExamplesUiRoot;
 
 pub fn setup_camera(mut commands: Commands) {
     // Camera
-    let camera_position = Vec3::new(0., 0., 70.5);
+    let camera_position = Vec3::new(0., 0., 10.5);
     let look_target = Vec3::ZERO;
     commands.spawn((
         Camera3dBundle {
