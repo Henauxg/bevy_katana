@@ -120,6 +120,11 @@ impl Node {
     }
 }
 
+pub enum GraphUpdate {
+    Change,
+    UnChange,
+}
+
 #[derive(Debug, Clone)]
 pub struct ChunkGraph {
     graph: Vec<Node>,
@@ -140,7 +145,7 @@ impl ChunkGraph {
         node.unfreeze();
     }
 
-    pub fn update_graph(&mut self) {
+    pub fn update_graph(&mut self) -> GraphUpdate {
         let mut update = false;
         for node in self.graph.iter_mut() {
             if node.has_broken_links {
@@ -151,6 +156,9 @@ impl ChunkGraph {
 
         if update {
             self.clean_graph();
+            GraphUpdate::Change
+        } else {
+            GraphUpdate::UnChange
         }
     }
 
