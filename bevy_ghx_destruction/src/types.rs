@@ -39,6 +39,7 @@ pub enum LinkType {
     Nil,
 }
 
+/// Junction between two chunks. A link is oriented: from -> to. A link is rather fixed (do exist), broken or nil(do not exist)
 #[derive(Debug, Clone, PartialEq)]
 pub struct Link {
     from: Node,
@@ -58,6 +59,7 @@ impl Link {
     }
 }
 
+/// Contains the chunk, its links, the chunk's neihbor and its rigid body
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
     chunk: Entity,
@@ -83,27 +85,31 @@ impl Node {
     }
 
     fn clean_links(&mut self, link: Link) -> Link {
+        // Remove the broken link from the list of all the links of the node
         let link = self.links.remove(
             self.links
                 .iter()
                 .position(|x| *x == link)
-                .expect("not such element in links"), //TODO: better error log
+                .expect("can't find the link in the node"),
         );
 
+        // Remove the neighbor which do not have any connection with this node anymore
         self.neighbors.remove(
             self.neighbors
                 .iter()
                 .position(|x| *x == link.to)
-                .expect("not such element in neighbors"), //TODO: better error log
+                .expect("can't find the neighbor of the node for the current link"),
         );
         link
     }
 
     fn unfreeze(&mut self) {
+        // Allow the chunk to move
         self.rigid_body = RigidBody::Dynamic;
     }
 
     pub fn clean_node(&mut self) {
+        // List of all the broken links
         let broken_links: Vec<_> = self
             .links
             .iter()
@@ -111,18 +117,15 @@ impl Node {
             .cloned()
             .collect();
 
+        // Remove the broken links from the node and the connections between the node and the neighbors
         for link in broken_links {
             let mut broken_link = self.clean_links(link.clone());
             broken_link.to.clean_links(link);
         }
 
+        //No more broken links inside the node
         self.has_broken_links = false;
     }
-}
-
-pub enum GraphUpdate {
-    Change,
-    UnChange,
 }
 
 #[derive(Debug, Clone)]
@@ -136,33 +139,33 @@ impl ChunkGraph {
     }
 
     fn remove_node_from_graph(&mut self, mut node: Node) {
+        // Look for the node to be removed from the graph
         self.graph.remove(
             self.graph
                 .iter()
                 .position(|x| *x == node)
-                .expect("not such element in neighbors"),
+                .expect("can't find the node in the graph"),
         );
+
+        //Since the node is not connected to the graph, we can allow the chunk to move
         node.unfreeze();
     }
 
-    pub fn update_graph(&mut self) -> GraphUpdate {
-        let mut update = false;
+    /// Update the graph node only if a link is broken
+    pub fn update_graph(&mut self) {
+        // Look for all nodes with broken links
         for node in self.graph.iter_mut() {
             if node.has_broken_links {
+                // Clean the node from its broken links
                 node.clean_node();
-                update = true;
             }
         }
-
-        if update {
-            self.clean_graph();
-            GraphUpdate::Change
-        } else {
-            GraphUpdate::UnChange
-        }
+        // Update the graph's connections
+        self.clean_graph();
     }
 
     fn clean_graph(&mut self) {
+        // Look for all the fixed chunks
         let fixed_nodes: Vec<Node> = self
             .graph
             .iter()
@@ -172,6 +175,7 @@ impl ChunkGraph {
 
         let mut search = self.graph.clone();
 
+        // For each nodes in the current searching process, we look at each of them are not connected to on of those current nodes. For those remaining,we do reapeat theproces until all nodes are not connected together or if there is no more nodes in thesearching process
         for fixed_node in fixed_nodes {
             if search.contains(&fixed_node) {
                 let mut visited = Vec::new();
@@ -184,6 +188,7 @@ impl ChunkGraph {
             }
         }
 
+        // For all the remaining nodes, we allow their respecting chunks to move
         for restricted_node in search {
             self.remove_node_from_graph(restricted_node);
         }
@@ -191,6 +196,7 @@ impl ChunkGraph {
 
     //TODO: no recursive
     fn travel(&self, fixed_node: &Node, search: &Vec<Node>, visited: &mut Vec<Node>) {
+        // Look at all the conections from the main node. Thos node would be remove from the searching process
         if search.contains(fixed_node) && !visited.contains(fixed_node) {
             visited.push(fixed_node.clone());
 
