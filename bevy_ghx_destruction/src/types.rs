@@ -1,10 +1,14 @@
+use std::collections::HashSet;
+
 use bevy::{
     math::{Vec2, Vec3A},
+    prelude::Entity,
     render::{
         mesh::{Indices, Mesh, PrimitiveTopology, VertexAttributeValues},
         render_asset::RenderAssetUsages,
     },
 };
+use bevy_rapier3d::dynamics::{ImpulseJoint, RigidBody};
 use ghx_constrained_delaunay::types::{Edge, VertexId};
 
 trait Indexable {
@@ -26,6 +30,168 @@ pub enum CutDirection {
     Bottom,
     OnPlane,
     Unknow,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
+pub enum LinkType {
+    Broken,
+    Fixed,
+    Nil,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Link {
+    from: Node,
+    to: Node,
+    joint: ImpulseJoint,
+    link_type: LinkType,
+}
+
+impl Link {
+    pub fn new(from: Node, to: Node, joint: ImpulseJoint) -> Link {
+        Link {
+            from: from,
+            to: to,
+            joint: joint,
+            link_type: LinkType::Nil,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Node {
+    chunk: Entity,
+    links: Vec<Link>,
+    neighbors: Vec<Node>,
+    rigid_body: RigidBody,
+    has_broken_links: bool,
+}
+
+impl Node {
+    pub fn new(chunk: Entity) -> Node {
+        Node {
+            chunk: chunk,
+            links: Vec::new(),
+            neighbors: Vec::new(),
+            rigid_body: RigidBody::Fixed, // freeze
+            has_broken_links: false,
+        }
+    }
+
+    fn broken_links(&mut self) {
+        self.has_broken_links = true;
+    }
+
+    fn clean_links(&mut self, link: Link) -> Link {
+        let link = self.links.remove(
+            self.links
+                .iter()
+                .position(|x| *x == link)
+                .expect("not such element in links"), //TODO: better error log
+        );
+
+        self.neighbors.remove(
+            self.neighbors
+                .iter()
+                .position(|x| *x == link.to)
+                .expect("not such element in neighbors"), //TODO: better error log
+        );
+        link
+    }
+
+    fn unfreeze(&mut self) {
+        self.rigid_body = RigidBody::Dynamic;
+    }
+
+    pub fn clean_node(&mut self) {
+        let broken_links: Vec<_> = self
+            .links
+            .iter()
+            .filter(|link| link.link_type == LinkType::Broken)
+            .cloned()
+            .collect();
+
+        for link in broken_links {
+            let mut broken_link = self.clean_links(link.clone());
+            broken_link.to.clean_links(link);
+        }
+
+        self.has_broken_links = false;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ChunkGraph {
+    graph: Vec<Node>,
+}
+
+impl ChunkGraph {
+    pub fn new(graph: Vec<Node>) -> ChunkGraph {
+        ChunkGraph { graph: graph }
+    }
+
+    fn remove_node_from_graph(&mut self, mut node: Node) {
+        self.graph.remove(
+            self.graph
+                .iter()
+                .position(|x| *x == node)
+                .expect("not such element in neighbors"),
+        );
+        node.unfreeze();
+    }
+
+    pub fn update_graph(&mut self) {
+        let mut update = false;
+        for node in self.graph.iter_mut() {
+            if node.has_broken_links {
+                node.clean_node();
+                update = true;
+            }
+        }
+
+        if update {
+            self.clean_graph();
+        }
+    }
+
+    fn clean_graph(&mut self) {
+        let fixed_nodes: Vec<Node> = self
+            .graph
+            .iter()
+            .filter(|node| node.rigid_body == RigidBody::Fixed)
+            .cloned()
+            .collect();
+
+        let mut search = self.graph.clone();
+
+        for fixed_node in fixed_nodes {
+            if search.contains(&fixed_node) {
+                let mut visited = Vec::new();
+                self.travel(&fixed_node, &search, &mut visited);
+                search = search
+                    .iter()
+                    .filter(|node| visited.contains(node) == false)
+                    .cloned()
+                    .collect();
+            }
+        }
+
+        for restricted_node in search {
+            self.remove_node_from_graph(restricted_node);
+        }
+    }
+
+    //TODO: no recursive
+    fn travel(&self, fixed_node: &Node, search: &Vec<Node>, visited: &mut Vec<Node>) {
+        if search.contains(fixed_node) && !visited.contains(fixed_node) {
+            visited.push(fixed_node.clone());
+
+            for neighbor_id in 0..fixed_node.neighbors.len() {
+                let neighbor = &fixed_node.neighbors[neighbor_id];
+                self.travel(neighbor, search, visited);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
