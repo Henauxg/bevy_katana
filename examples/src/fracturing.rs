@@ -13,7 +13,7 @@ use bevy::{
     transform::components::Transform,
     DefaultPlugins,
 };
-use bevy_ghx_destruction::{slicing::slicing::fragment_mesh, types::MeshBuilder};
+use bevy_ghx_destruction::{slicing::slicing::fragment_mesh, types::SlicedMesh};
 use bevy_mod_raycast::prelude::*;
 use bevy_rapier3d::{
     dynamics::{FixedJointBuilder, ImpulseJoint, RigidBody},
@@ -23,6 +23,7 @@ use bevy_rapier3d::{
     },
     na::{Isometry3, Translation3, UnitQuaternion},
     parry::{
+        bounding_volume::Aabb,
         math::{Isometry, Point, Translation},
         shape::{Shape, TriMesh},
     },
@@ -47,14 +48,18 @@ fn setup(
     meshes_assets: ResMut<Assets<Mesh>>,
 ) {
     let mesh = Cuboid::new(1., 1., 1.).mesh();
+    // let mesh_aabb = Cuboid::new(1., 1., 1.).mesh().compute_aabb().unwrap();
 
-    let trimesh = create_parry_trimesh(&MeshBuilder::mesh_mapping_from_mesh(&mesh));
+    // TODO Do not compute trimeshes. We just need aabbs
+    let trimesh = create_parry_trimesh(&SlicedMesh::from_bevy_mesh(&mesh));
 
-    let meshes = fragment_mesh(&mesh, 3);
+    let meshes = fragment_mesh(&mesh, 1);
 
+    // TODO Less back & forth between != mesh formats
     let chunks = create_chunks(&meshes);
 
-    let (translations, joints) = create_joints(&chunks, &trimesh);
+    let (translations, joints) =
+        create_joints(&chunks, &trimesh.compute_aabb(&Isometry3::identity()));
 
     spawn_entities(
         commands,
@@ -70,14 +75,14 @@ fn spawn_entities(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes_assets: ResMut<Assets<Mesh>>,
-    chunks: &Vec<MeshBuilder>,
+    chunks: &Vec<SlicedMesh>,
     translations: &Vec<Translation3<f32>>,
     joints: &HashMap<usize, Vec<usize>>,
 ) {
     let mut entity_map = HashMap::new();
 
     for (i, chunk) in chunks.iter().enumerate() {
-        let mesh = chunk.create_mesh();
+        let mesh = chunk.to_bevy_mesh();
         let entity = create_entity(
             &mut materials,
             &mut meshes_assets,
@@ -105,8 +110,8 @@ fn spawn_entities(
 }
 
 fn create_joints(
-    chunks: &Vec<MeshBuilder>,
-    trimesh: &TriMesh,
+    chunks: &Vec<SlicedMesh>,
+    aabb: &Aabb,
 ) -> (Vec<Translation3<f32>>, HashMap<usize, Vec<usize>>) {
     let mut joints = HashMap::new();
     let mut translations = vec![Translation::new(0.0, 0.0, 0.0); chunks.len()];
@@ -115,7 +120,7 @@ fn create_joints(
         let mut joint = Vec::new();
 
         let trimesh1 = create_parry_trimesh(chunk1);
-        let translation1 = calculate_translation(trimesh, &trimesh1);
+        let translation1 = calculate_translation(aabb, &trimesh1);
         let isometry1 = create_isometry(translation1.x, translation1.y, translation1.z, 0.);
 
         translations[i] = translation1;
@@ -126,7 +131,7 @@ fn create_joints(
             }
 
             let trimesh2 = create_parry_trimesh(chunk2);
-            let translation2 = calculate_translation(trimesh, &trimesh2);
+            let translation2 = calculate_translation(aabb, &trimesh2);
             let isometry2 = create_isometry(translation2.x, translation2.y, translation2.z, 0.);
 
             if check_collision(&trimesh1, &isometry1, &trimesh2, &isometry2) {
@@ -165,8 +170,7 @@ fn create_entity(
         .id()
 }
 
-fn calculate_translation(main_mesh: &TriMesh, sub_mesh: &TriMesh) -> Translation3<f32> {
-    let main_aabb = main_mesh.compute_aabb(&Isometry3::identity());
+fn calculate_translation(main_aabb: &Aabb, sub_mesh: &TriMesh) -> Translation3<f32> {
     let main_center = main_aabb.center();
 
     let sub_aabb = sub_mesh.compute_aabb(&Isometry3::identity());
@@ -183,7 +187,7 @@ fn create_isometry(tx: f32, ty: f32, tz: f32, angle: f32) -> Isometry3<f32> {
     Isometry3::from_parts(translation, rotation)
 }
 
-fn create_parry_trimesh(chunk: &MeshBuilder) -> TriMesh {
+fn create_parry_trimesh(chunk: &SlicedMesh) -> TriMesh {
     let vertices = chunk.vertices();
     let mut parry_vertices = Vec::new();
     for vertex in vertices {
@@ -191,7 +195,7 @@ fn create_parry_trimesh(chunk: &MeshBuilder) -> TriMesh {
         parry_vertices.push(Point::new(pos.x, pos.y, pos.z));
     }
 
-    let triangles = chunk.triangles();
+    let triangles = chunk.indices();
     let mut parry_indices = Vec::new();
     for triangle_id in (0..triangles.len()).step_by(3) {
         parry_indices.push([
@@ -204,10 +208,10 @@ fn create_parry_trimesh(chunk: &MeshBuilder) -> TriMesh {
     TriMesh::new(parry_vertices, parry_indices)
 }
 
-fn create_chunks(meshes: &VecDeque<Mesh>) -> Vec<MeshBuilder> {
+fn create_chunks(meshes: &Vec<Mesh>) -> Vec<SlicedMesh> {
     let mut chunks = Vec::new();
     for mesh in meshes {
-        chunks.push(MeshBuilder::mesh_mapping_from_mesh(mesh));
+        chunks.push(SlicedMesh::from_bevy_mesh(mesh));
     }
 
     chunks

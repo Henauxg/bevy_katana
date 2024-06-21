@@ -1,7 +1,7 @@
 use bevy::{math::Vec3A, render::primitives::Aabb};
 use rand::{thread_rng, Rng};
 
-use crate::types::{CutDirection, Plane};
+use crate::types::{PlaneSide, Plane};
 
 fn random_point_from_aabb(aabb: &Aabb) -> Vec3A {
     let mut rng = thread_rng();
@@ -24,7 +24,7 @@ pub fn get_random_normalized_vec() -> Vec3A {
     Vec3A::new(rng.gen::<f32>(), rng.gen::<f32>(), rng.gen::<f32>()).normalize()
 }
 
-pub fn find_intersection_line_plane(
+pub fn line_plane_intersection(
     line_point_start: Vec3A,
     line_point_end: Vec3A,
     origin_point: Vec3A,
@@ -53,14 +53,14 @@ pub fn find_intersection_line_plane(
     return None;
 }
 
-pub fn is_above_plane(point: Vec3A, plane: Plane) -> CutDirection {
+pub fn is_above_plane(point: Vec3A, plane: Plane) -> PlaneSide {
     let vector_to_plane = (point - plane.origin()).normalize();
     let distance = -vector_to_plane.dot(plane.normal());
     if distance < 0. {
-        return CutDirection::Top;
+        return PlaneSide::Top;
     } else if distance.is_nan() {
-        return CutDirection::OnPlane;
+        return PlaneSide::OnPlane;
     }
 
-    CutDirection::Bottom
+    PlaneSide::Bottom
 }

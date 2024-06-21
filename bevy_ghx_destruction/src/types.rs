@@ -1,10 +1,8 @@
-use std::collections::HashSet;
-
 use bevy::{
     math::{Vec2, Vec3A},
     prelude::Entity,
     render::{
-        mesh::{Indices, Mesh, PrimitiveTopology, VertexAttributeValues},
+        mesh::{Indices, PrimitiveTopology, VertexAttributeValues},
         render_asset::RenderAssetUsages,
     },
 };
@@ -24,12 +22,11 @@ impl Indexable for Indices {
     }
 }
 
-#[derive(PartialEq, Clone, Copy, Debug)]
-pub enum CutDirection {
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+pub enum PlaneSide {
     Top,
     Bottom,
     OnPlane,
-    Unknow,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
@@ -234,6 +231,7 @@ impl Plane {
 
 #[derive(Debug, Clone, Copy)]
 pub struct MeshBuilderVertex {
+    // TODO struct of arrays would probably be better
     pos: Vec3A,
     uv: Vec2,
     normal: Vec3A,
@@ -270,45 +268,53 @@ impl MeshBuilderVertex {
 }
 
 #[derive(Debug, Clone)]
-pub struct MeshBuilder {
+pub struct SlicedMesh {
     vertices: Vec<MeshBuilderVertex>,
-    sliced_vertices: Vec<MeshBuilderVertex>,
-    triangles: Vec<VertexId>,
+    indices: Vec<VertexId>,
+    sliced_face_vertices: Vec<MeshBuilderVertex>,
+    /// Mapping which gives the id of a vertex in  from the original mesh to the sliced mesh vertex
     index_map: Vec<VertexId>,
     constraints: Vec<Edge>,
 }
 
-impl MeshBuilder {
+impl SlicedMesh {
     pub fn new(
         vertices: Vec<MeshBuilderVertex>,
-        sliced_vertices: Vec<MeshBuilderVertex>,
-        triangles: Vec<VertexId>,
+        indices: Vec<VertexId>,
         index_map: Vec<VertexId>,
-        constraints: Vec<Edge>,
-    ) -> MeshBuilder {
-        MeshBuilder {
+    ) -> SlicedMesh {
+        SlicedMesh {
             vertices,
-            sliced_vertices,
-            triangles,
+            indices,
             index_map,
-            constraints,
+            sliced_face_vertices: Vec::new(), // TODO Capacity ?
+            constraints: Vec::new(),          // TODO Capacity ?
         }
     }
 
-    pub fn new_from(mesh_mapping: &MeshBuilder) -> MeshBuilder {
-        MeshBuilder::new_from_mesh_builder(
-            mesh_mapping.vertices().len() + mesh_mapping.sliced_vertices().len(),
+    pub fn initialize_with(mesh: &SlicedMesh) -> SlicedMesh {
+        SlicedMesh::new(
+            Vec::new(), // TODO Capacity ?
+            Vec::new(), // TODO Capacity ?
+            // vec![0; mesh_builder.vertices().len() + mesh_builder.sliced_face_vertices().len()],
+            Vec::with_capacity(mesh.vertices().len() + mesh.sliced_face_vertices().len()),
         )
     }
 
-    pub fn new_from_mesh_builder(vertex_count: usize) -> MeshBuilder {
-        MeshBuilder {
-            vertices: Vec::new(),
-            sliced_vertices: Vec::new(),
-            triangles: Vec::new(),
-            index_map: vec![0; vertex_count],
-            constraints: Vec::new(),
+    pub fn from_bevy_mesh(mesh: &bevy::render::mesh::Mesh) -> SlicedMesh {
+        let pos: Vec<Vec3A> = Self::vertices_from_mesh(mesh); // TODO Do we really need to copy it ?
+        let uv = Self::uv_from_mesh(mesh);
+        let normal = Self::normal_from_mesh(mesh);
+
+        let mut vertices = Vec::new();
+        for index in 0..pos.len() {
+            vertices.push(MeshBuilderVertex::new(pos[index], uv[index], normal[index]));
         }
+
+        let index_map: Vec<VertexId> = vec![0; vertices.len()];
+        let indices: Vec<VertexId> = Self::triangles_from_mesh(mesh);
+
+        SlicedMesh::new(vertices, indices, index_map)
     }
 
     pub fn constraints(&self) -> &Vec<Edge> {
@@ -322,20 +328,20 @@ impl MeshBuilder {
         &self.vertices
     }
 
-    pub fn sliced_vertices(&self) -> &Vec<MeshBuilderVertex> {
-        &self.sliced_vertices
+    pub fn sliced_face_vertices(&self) -> &Vec<MeshBuilderVertex> {
+        &self.sliced_face_vertices
     }
 
     // pub fn sliced_vertices_mut(&mut self, sliced_vertex: &mut MeshBuilderVertex, id: VertexId) {
     //     *&mut self.sliced_vertices[id] = *sliced_vertex;
     // }
 
-    pub fn sliced_vertices_mut(&mut self) -> &mut Vec<MeshBuilderVertex> {
-        &mut self.sliced_vertices
+    pub fn sliced_face_vertices_mut(&mut self) -> &mut Vec<MeshBuilderVertex> {
+        &mut self.sliced_face_vertices
     }
 
-    pub fn triangles(&self) -> &Vec<VertexId> {
-        &self.triangles
+    pub fn indices(&self) -> &Vec<VertexId> {
+        &self.indices
     }
 
     pub fn index_map(&self) -> &Vec<VertexId> {
@@ -345,48 +351,27 @@ impl MeshBuilder {
     pub fn add_sliced_vertex(&mut self, pos: Vec3A, uv: Vec2, normal: Vec3A) {
         let vertex = MeshBuilderVertex::new(pos, uv, normal);
         self.vertices.push(vertex);
-        self.sliced_vertices.push(vertex);
+        self.sliced_face_vertices.push(vertex);
     }
 
-    pub fn add_mapped_vertex(&mut self, vertex: MeshBuilderVertex, index: usize) {
+    pub fn push_mapped_vertex(&mut self, vertex: MeshBuilderVertex) {
         self.vertices.push(vertex);
-        self.index_map[index] = self.vertices.len() as VertexId - 1;
+        self.index_map.push(self.vertices.len() as VertexId - 1);
     }
 
     pub fn push_mapped_triangle(&mut self, v1: VertexId, v2: VertexId, v3: VertexId) {
-        self.triangles.push(self.index_map[v1 as usize]);
-        self.triangles.push(self.index_map[v2 as usize]);
-        self.triangles.push(self.index_map[v3 as usize]);
+        self.indices.push(self.index_map[v1 as usize]);
+        self.indices.push(self.index_map[v2 as usize]);
+        self.indices.push(self.index_map[v3 as usize]);
     }
 
     pub fn push_triangle(&mut self, v1: VertexId, v2: VertexId, v3: VertexId) {
-        self.triangles.push(v1);
-        self.triangles.push(v2);
-        self.triangles.push(v3);
+        self.indices.push(v1);
+        self.indices.push(v2);
+        self.indices.push(v3);
     }
 
-    pub fn mesh_mapping_from_mesh(mesh: &Mesh) -> MeshBuilder {
-        let pos: Vec<Vec3A> = Self::vertex_from_mesh(mesh);
-        let uv = Self::uv_from_mesh(mesh);
-        let normal = Self::normal_from_mesh(mesh);
-
-        let mut vertices = Vec::new();
-        for index in 0..pos.len() {
-            vertices.push(MeshBuilderVertex::new(pos[index], uv[index], normal[index]));
-        }
-
-        let sliced_vertices = Vec::new();
-
-        let constraints = Vec::new();
-
-        let index_map: Vec<VertexId> = vec![0; vertices.len()];
-
-        let triangles: Vec<VertexId> = Self::triangles_from_mesh(mesh);
-
-        MeshBuilder::new(vertices, sliced_vertices, triangles, index_map, constraints)
-    }
-
-    pub fn triangles_from_mesh(mesh: &Mesh) -> Vec<VertexId> {
+    pub fn triangles_from_mesh(mesh: &bevy::render::mesh::Mesh) -> Vec<VertexId> {
         let mut triangles: Vec<VertexId> = Vec::new();
         let indices = mesh.indices().unwrap();
 
@@ -397,8 +382,8 @@ impl MeshBuilder {
         triangles
     }
 
-    pub fn vertex_from_mesh(mesh: &Mesh) -> Vec<Vec3A> {
-        mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+    pub fn vertices_from_mesh(mesh: &bevy::render::mesh::Mesh) -> Vec<Vec3A> {
+        mesh.attribute(bevy::render::mesh::Mesh::ATTRIBUTE_POSITION)
             .unwrap()
             .as_float3()
             .unwrap()
@@ -407,8 +392,11 @@ impl MeshBuilder {
             .collect()
     }
 
-    pub fn uv_from_mesh(mesh: &Mesh) -> Vec<Vec2> {
-        let uv = match mesh.attribute(Mesh::ATTRIBUTE_UV_0).unwrap() {
+    pub fn uv_from_mesh(mesh: &bevy::render::mesh::Mesh) -> Vec<Vec2> {
+        let uv = match mesh
+            .attribute(bevy::render::mesh::Mesh::ATTRIBUTE_UV_0)
+            .unwrap()
+        {
             VertexAttributeValues::Float32x2(values) => Some(values),
             _ => None,
         }
@@ -416,8 +404,11 @@ impl MeshBuilder {
         uv.clone().iter().map(|v| Vec2::from_array(*v)).collect()
     }
 
-    pub fn normal_from_mesh(mesh: &Mesh) -> Vec<Vec3A> {
-        let normal = match mesh.attribute(Mesh::ATTRIBUTE_NORMAL).unwrap() {
+    pub fn normal_from_mesh(mesh: &bevy::render::mesh::Mesh) -> Vec<Vec3A> {
+        let normal = match mesh
+            .attribute(bevy::render::mesh::Mesh::ATTRIBUTE_NORMAL)
+            .unwrap()
+        {
             VertexAttributeValues::Float32x3(values) => Some(values),
             _ => None,
         }
@@ -429,62 +420,60 @@ impl MeshBuilder {
             .collect()
     }
 
-    //todo: use ordered float
-    pub fn shrink_sliced_vertices(&mut self) {
-        let mut shrink_vertices: Vec<MeshBuilderVertex> =
-            Vec::with_capacity(self.sliced_vertices.len());
+    // //todo: use ordered float
+    // pub fn shrink_sliced_vertices(&mut self) {
+    //     let mut shrink_vertices: Vec<MeshBuilderVertex> =
+    //         Vec::with_capacity(self.sliced_vertices.len());
 
-        let mut index_map = vec![0; self.sliced_vertices.len()];
+    //     let mut index_map = vec![0; self.sliced_vertices.len()];
 
-        let mut k = 0;
+    //     let mut k = 0;
 
-        for i in 0..self.sliced_vertices.len() {
-            let mut duplicate = false;
-            for j in 0..shrink_vertices.len() {
-                if self.sliced_vertices[i].pos == shrink_vertices[j].pos {
-                    index_map[i] = j;
-                    duplicate = true;
-                    break;
-                }
-            }
+    //     for i in 0..self.sliced_vertices.len() {
+    //         let mut duplicate = false;
+    //         for j in 0..shrink_vertices.len() {
+    //             if self.sliced_vertices[i].pos == shrink_vertices[j].pos {
+    //                 index_map[i] = j;
+    //                 duplicate = true;
+    //                 break;
+    //             }
+    //         }
 
-            if !duplicate {
-                shrink_vertices.push(self.sliced_vertices[i].clone());
-                index_map[i] = k;
-                k += 1;
-            }
-        }
+    //         if !duplicate {
+    //             shrink_vertices.push(self.sliced_vertices[i].clone());
+    //             index_map[i] = k;
+    //             k += 1;
+    //         }
+    //     }
 
-        for edge in self.constraints.iter_mut() {
-            edge.from = index_map[edge.from as usize] as VertexId;
-            edge.to = index_map[edge.to as usize] as VertexId;
-        }
+    //     for edge in self.constraints.iter_mut() {
+    //         edge.from = index_map[edge.from as usize] as VertexId;
+    //         edge.to = index_map[edge.to as usize] as VertexId;
+    //     }
 
-        shrink_vertices.shrink_to_fit();
+    //     shrink_vertices.shrink_to_fit();
 
-        self.sliced_vertices = shrink_vertices;
-    }
+    //     self.sliced_vertices = shrink_vertices;
+    // }
 
-    pub fn create_mesh(&self) -> Mesh {
-        let fragment_mesh = Mesh::new(
+    pub fn to_bevy_mesh(&self) -> bevy::render::mesh::Mesh {
+        let fragment_mesh = bevy::render::mesh::Mesh::new(
             PrimitiveTopology::TriangleList,
             RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
         )
         .with_inserted_attribute(
-            Mesh::ATTRIBUTE_POSITION,
-            MeshBuilder::into_bevy_vertices(&self.vertices(), &self.sliced_vertices()),
+            bevy::render::mesh::Mesh::ATTRIBUTE_POSITION,
+            SlicedMesh::into_bevy_vertices(&self.vertices(), &self.sliced_face_vertices()),
         )
         .with_inserted_attribute(
-            Mesh::ATTRIBUTE_UV_0,
-            MeshBuilder::into_bevy_uvs(&self.vertices(), &self.sliced_vertices()),
+            bevy::render::mesh::Mesh::ATTRIBUTE_UV_0,
+            SlicedMesh::into_bevy_uvs(&self.vertices(), &self.sliced_face_vertices()),
         )
         .with_inserted_attribute(
-            Mesh::ATTRIBUTE_NORMAL,
-            MeshBuilder::into_bevy_normal(&self.vertices(), &self.sliced_vertices()),
+            bevy::render::mesh::Mesh::ATTRIBUTE_NORMAL,
+            SlicedMesh::into_bevy_normal(&self.vertices(), &self.sliced_face_vertices()),
         )
-        .with_inserted_indices(Indices::U32(MeshBuilder::into_bevy_indices(
-            &self.triangles(),
-        )));
+        .with_inserted_indices(Indices::U32(SlicedMesh::into_bevy_indices(&self.indices())));
         fragment_mesh
     }
 
@@ -548,6 +537,6 @@ impl MeshBuilder {
     }
 
     pub fn index(&self) -> &Vec<VertexId> {
-        &self.triangles
+        &self.indices
     }
 }
