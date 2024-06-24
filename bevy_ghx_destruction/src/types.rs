@@ -274,7 +274,6 @@ pub struct SlicedMesh {
     sliced_face_vertices: Vec<MeshBuilderVertex>,
     /// Mapping which gives the id of a vertex in the mesh slice from the id of the vertex in the mesh being sliced. Sparse array
     index_map: Vec<VertexId>,
-    constraints: Vec<Edge>,
 }
 
 impl SlicedMesh {
@@ -288,7 +287,6 @@ impl SlicedMesh {
             indices,
             index_map,
             sliced_face_vertices: Vec::new(), // TODO Capacity ?
-            constraints: Vec::new(),          // TODO Capacity ?
         }
     }
 
@@ -316,13 +314,6 @@ impl SlicedMesh {
         let indices: Vec<VertexId> = Self::triangles_from_mesh(mesh);
 
         SlicedMesh::new(vertices, indices, index_map)
-    }
-
-    pub fn constraints(&self) -> &Vec<Edge> {
-        &self.constraints
-    }
-    pub fn constraints_mut(&mut self) -> &mut Vec<Edge> {
-        &mut self.constraints
     }
 
     pub fn vert(&self, vert_index: VertexId) -> &MeshBuilderVertex {

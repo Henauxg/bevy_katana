@@ -136,12 +136,15 @@ fn internal_slice_mesh(
         }
     }
 
+    // TODO Could share buffer at a higher level
+    let mut sliced_contour = Vec::new();
     divide_mesh_triangles(
         mesh_to_slice,
         plane,
         &sides,
         &mut top_slice,
         &mut bottom_slice,
+        &mut sliced_contour,
     );
 
     // TODO Could we easily know beforehand if the mesh intersects the slicing plane ?
@@ -150,7 +153,7 @@ fn internal_slice_mesh(
         None
     } else {
         // Fill the newly created sliced face
-        fill_sliced_face(&plane, &mut top_slice, &mut bottom_slice);
+        fill_sliced_face(&plane, &mut top_slice, &mut bottom_slice, &sliced_contour);
         Some((top_slice, bottom_slice))
     }
 }
@@ -158,8 +161,9 @@ fn internal_slice_mesh(
 //todo: clean with our triangulation
 fn fill_sliced_face(
     plane: &Plane,
-    top_mesh_builder: &mut SlicedMesh,
-    bottom_mesh_builder: &mut SlicedMesh,
+    top_slice: &mut SlicedMesh,
+    bottom_slice: &mut SlicedMesh,
+    sliced_contour: &Vec<Edge>,
 ) {
     // // Erease duplicated sliced vertices
     // top_mesh_builder.shrink_sliced_vertices();
@@ -168,7 +172,7 @@ fn fill_sliced_face(
     // Apply the triangulation to the top cut face. No need to do it for the bottom cute face since they both
     // share the same vertices, we will just reverse the normal.
     // TODO Would not need a copy if we had a SoA
-    let vertices = top_mesh_builder
+    let vertices = top_slice
         .sliced_face_vertices()
         .iter()
         .map(|v| v.pos())
@@ -176,15 +180,15 @@ fn fill_sliced_face(
     let planar_vertices = transform_to_2d_planar_coordinate_system(&vertices, -plane.normal());
     let triangulation = ghx_constrained_delaunay::constrained_triangulation_from_2d_vertices(
         &planar_vertices,
-        top_mesh_builder.constraints(),
+        sliced_contour,
         ConstrainedTriangulationConfiguration::default(),
     );
 
     // Apply normals and uv to sliced vertices
-    for (index, (v_top, v_bottom)) in top_mesh_builder
+    for (index, (v_top, v_bottom)) in top_slice
         .sliced_face_vertices_mut()
         .iter_mut()
-        .zip(bottom_mesh_builder.sliced_face_vertices_mut())
+        .zip(bottom_slice.sliced_face_vertices_mut())
         .enumerate()
     {
         // Vertices inside the triangulation have been normalized, it is requiered to multiply by the scale factor:
@@ -199,16 +203,16 @@ fn fill_sliced_face(
 
     // TODO Why can't we merge the two verts buffers already ?
     // We need to add the sliced triangles after the non sliced triangles
-    let top_slice_verts_count = top_mesh_builder.vertices().len() as IndexType;
-    let bottom_slice_verts_count = bottom_mesh_builder.vertices().len() as IndexType;
+    let top_slice_verts_count = top_slice.vertices().len() as IndexType;
+    let bottom_slice_verts_count = bottom_slice.vertices().len() as IndexType;
     for t in triangulation.triangles.iter() {
-        top_mesh_builder.push_triangle(
+        top_slice.push_triangle(
             top_slice_verts_count + t[0],
             top_slice_verts_count + t[1],
             top_slice_verts_count + t[2],
         );
         // We need to change the orientation of the triangles for one of the cut face:
-        bottom_mesh_builder.push_triangle(
+        bottom_slice.push_triangle(
             bottom_slice_verts_count + t[0],
             bottom_slice_verts_count + t[2],
             bottom_slice_verts_count + t[1],
@@ -285,6 +289,7 @@ pub fn divide_mesh_triangles(
     sides: &Vec<PlaneSide>,
     top_slice: &mut SlicedMesh,
     bottom_slice: &mut SlicedMesh,
+    sliced_contour: &mut Vec<Edge>,
 ) {
     for triangle in sliced_mesh.indices().chunks_exact(3) {
         let (v1, v2, v3) = (triangle[0], triangle[1], triangle[2]);
@@ -315,6 +320,7 @@ pub fn divide_mesh_triangles(
                 split_on_plane_triangle(
                     top_slice,
                     bottom_slice,
+                    sliced_contour,
                     [
                         triangle[*vertex as usize],
                         triangle[edge.0 as usize],
@@ -335,6 +341,7 @@ pub fn divide_mesh_triangles(
                     plane,
                     top_slice,
                     bottom_slice,
+                    sliced_contour,
                     verts_indexes,
                     true,
                     &sliced_mesh,
@@ -350,6 +357,7 @@ pub fn divide_mesh_triangles(
                     plane,
                     top_slice,
                     bottom_slice,
+                    sliced_contour,
                     verts_indexes,
                     false,
                     &sliced_mesh,
@@ -369,9 +377,9 @@ pub fn divide_mesh_triangles(
                 top_slice.sliced_face_vertices_mut().push(vert.clone());
                 bottom_slice.sliced_face_vertices_mut().push(vert.clone());
             }
-            TrianglePlaneIntersection::OneEdgeBottom(edge) => {
-                // TODO Add edges vertices to sliced face
+            TrianglePlaneIntersection::OneEdgeBottom((v0, v1)) => {
                 bottom_slice.push_mapped_triangle(triangle[0], triangle[1], triangle[2]);
+                let edge = (triangle[*v0 as usize], triangle[*v1 as usize]);
 
                 let vert = sliced_mesh.vert(triangle[edge.0 as usize]);
                 // TODO Could we push directly in normal vertices buffer (use a slice for tirangulation)
@@ -382,10 +390,15 @@ pub fn divide_mesh_triangles(
                 // TODO Could we push directly in normal vertices buffer (use a slice for tirangulation)
                 top_slice.sliced_face_vertices_mut().push(vert.clone());
                 bottom_slice.sliced_face_vertices_mut().push(vert.clone());
+
+                sliced_contour.push(Edge::new(
+                    top_slice.index_map()[edge.0 as usize],
+                    top_slice.index_map()[edge.1 as usize],
+                ));
             }
-            TrianglePlaneIntersection::OneEdgeTop(edge) => {
-                // TODO Add edges vertices to sliced face
+            TrianglePlaneIntersection::OneEdgeTop((v0, v1)) => {
                 top_slice.push_mapped_triangle(triangle[0], triangle[1], triangle[2]);
+                let edge = (triangle[*v0 as usize], triangle[*v1 as usize]);
 
                 let vert = sliced_mesh.vert(triangle[edge.0 as usize]);
                 // TODO Could we push directly in normal vertices buffer (use a slice for tirangulation)
@@ -396,6 +409,11 @@ pub fn divide_mesh_triangles(
                 // TODO Could we push directly in normal vertices buffer (use a slice for tirangulation)
                 top_slice.sliced_face_vertices_mut().push(vert.clone());
                 bottom_slice.sliced_face_vertices_mut().push(vert.clone());
+
+                sliced_contour.push(Edge::new(
+                    top_slice.index_map()[edge.0 as usize],
+                    top_slice.index_map()[edge.1 as usize],
+                ));
             }
             TrianglePlaneIntersection::FlatTriangle => {
                 // TODO Handle flat triangles ont the slicing plane. We may just discard them (indices) but keep their vertices
@@ -446,18 +464,19 @@ fn internal_spawn_fragment(
     ));
 }
 
-///            * top
+///           /* 1 top
 ///         /  |
-///       /    |
+///     0 /    |
 ///    --*-----m-- plane
 ///       \    |
 ///         \  |
-///            * bottom
+///           \* 2 bottom
 ///
 /// The vertices are given as [on plane, top, bottom]:
 fn split_on_plane_triangle(
     top_slice: &mut SlicedMesh,
     bottom_slice: &mut SlicedMesh,
+    sliced_contour: &mut Vec<Edge>,
     vertices: [u64; 3],
     sliced_mesh: &SlicedMesh,
     plane: Plane,
@@ -496,17 +515,10 @@ fn split_on_plane_triangle(
         top_slice.index_map()[vertices[0] as usize],
     );
 
-    let top_sliced_vertices_nbr = top_slice.sliced_face_vertices().len() as VertexId;
-    let bottom_sliced_vertices_nbr = bottom_slice.sliced_face_vertices().len() as VertexId;
-
-    // Need to be careful with constrained edges orientation:
-    top_slice.constraints_mut().push(Edge::new(
-        top_sliced_vertices_nbr - 2,
-        top_sliced_vertices_nbr - 1,
-    ));
-    bottom_slice.constraints_mut().push(Edge::new(
-        bottom_sliced_vertices_nbr - 1,
-        bottom_sliced_vertices_nbr - 2,
+    // Left to right
+    sliced_contour.push(Edge::new(
+        top_slice.index_map()[vertices[0] as usize],
+        (top_slice.sliced_face_vertices().len() - 1) as VertexId,
     ));
 }
 
@@ -535,6 +547,7 @@ fn split_intersected_triangle(
     plane: Plane,
     top_slice: &mut SlicedMesh,
     bottom_slice: &mut SlicedMesh,
+    sliced_contour: &mut Vec<Edge>,
     verts_indexes: [VertexId; 3],
     two_vertices_on_top: bool,
     sliced_mesh: &SlicedMesh,
@@ -612,21 +625,13 @@ fn split_intersected_triangle(
                     id23_bottom,
                 );
 
-                let top_sliced_vertices_nbr = top_slice.sliced_face_vertices().len() as VertexId;
-                let bottom_sliced_vertices_nbr =
-                    bottom_slice.sliced_face_vertices().len() as VertexId;
-
-                // Need to be carfull with constrained edges orientation:
-                top_slice.constraints_mut().push(Edge::new(
-                    top_sliced_vertices_nbr - 2,
-                    top_sliced_vertices_nbr - 1,
-                ));
-                bottom_slice.constraints_mut().push(Edge::new(
-                    bottom_sliced_vertices_nbr - 1,
-                    bottom_sliced_vertices_nbr - 2,
+                // Left to right
+                sliced_contour.push(Edge::new(
+                    (top_slice.sliced_face_vertices().len() - 2) as VertexId,
+                    (top_slice.sliced_face_vertices().len() - 1) as VertexId,
                 ));
             } else {
-                // Add two triangles bellow
+                // Add two triangles below
                 bottom_slice.push_triangle(
                     bottom_slice.index_map()[verts_indexes[0] as usize],
                     bottom_slice.index_map()[verts_indexes[1] as usize],
@@ -646,18 +651,10 @@ fn split_intersected_triangle(
                     top_slice.index_map()[verts_indexes[2] as usize],
                 );
 
-                let top_sliced_vertices_nbr = top_slice.sliced_face_vertices().len() as VertexId;
-                let bottom_sliced_vertices_nbr =
-                    bottom_slice.sliced_face_vertices().len() as VertexId;
-
-                // Need to be carfull with constrained edges orientation:
-                top_slice.constraints_mut().push(Edge::new(
-                    top_sliced_vertices_nbr - 1,
-                    top_sliced_vertices_nbr - 2,
-                ));
-                bottom_slice.constraints_mut().push(Edge::new(
-                    bottom_sliced_vertices_nbr - 2,
-                    bottom_sliced_vertices_nbr - 1,
+                // Left to right
+                sliced_contour.push(Edge::new(
+                    (top_slice.sliced_face_vertices().len() - 1) as VertexId,
+                    (top_slice.sliced_face_vertices().len() - 2) as VertexId,
                 ));
             }
         }
