@@ -30,7 +30,7 @@ use ghx_constrained_delaunay::{
     types::{Edge, IndexType, TriangleVertexIndex, VertexId},
 };
 
-pub fn fragment_mesh(mesh: &Mesh, iteration_count: u32) -> Vec<Mesh> {
+pub fn slice_mesh_iterative(mesh: &Mesh, iteration_count: u32) -> Vec<Mesh> {
     if iteration_count == 0 {
         return vec![mesh.clone()];
     }
@@ -38,20 +38,20 @@ pub fn fragment_mesh(mesh: &Mesh, iteration_count: u32) -> Vec<Mesh> {
     let mut buffer_1 = Vec::with_capacity(2_u32.pow(iteration_count) as usize);
     let mut buffer_2 = Vec::with_capacity(2_u32.pow(iteration_count) as usize);
 
-    let mut buffer_to_cut = &mut buffer_1;
-    let mut cut_buffer = &mut buffer_2;
+    let mut meshes_to_slice_buffer = &mut buffer_1;
+    let mut sliced_meshes_buffer = &mut buffer_2;
 
-    buffer_to_cut.push(mesh.clone());
+    meshes_to_slice_buffer.push(mesh.clone());
 
     for _ in 0..iteration_count {
-        cut_buffer.clear();
+        sliced_meshes_buffer.clear();
 
-        cut_meshes(&buffer_to_cut, cut_buffer);
+        internal_slice_meshes(&meshes_to_slice_buffer, sliced_meshes_buffer);
 
         // Swap buffer
-        let tmp = cut_buffer;
-        cut_buffer = buffer_to_cut;
-        buffer_to_cut = tmp;
+        let tmp = sliced_meshes_buffer;
+        sliced_meshes_buffer = meshes_to_slice_buffer;
+        meshes_to_slice_buffer = tmp;
     }
 
     if iteration_count % 2 == 0 {
@@ -61,15 +61,15 @@ pub fn fragment_mesh(mesh: &Mesh, iteration_count: u32) -> Vec<Mesh> {
     }
 }
 
-fn cut_meshes(buffer_to_cut: &Vec<Mesh>, cut_buffer: &mut Vec<Mesh>) {
-    for mesh in buffer_to_cut.iter() {
+fn internal_slice_meshes(meshes_to_slice: &Vec<Mesh>, sliced_meshes: &mut Vec<Mesh>) {
+    for mesh in meshes_to_slice.iter() {
         // Mesh center approximation
         let mesh_center = mesh.compute_aabb().unwrap().center;
         // Random normalized vector for the cut plane
         let normal_vec = get_random_normalized_vec();
         let plane = Plane::new(mesh_center, normal_vec);
         let frags = slice_mesh(plane, mesh);
-        cut_buffer.extend(frags)
+        sliced_meshes.extend(frags)
     }
 }
 
@@ -80,36 +80,24 @@ pub fn slice(
     meshes_assets: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
 ) {
-    // Mesh center
     let mesh_center = mesh.compute_aabb().unwrap().center;
-
-    // Random normalized vector for the cut plane
     let normal_vec = get_random_normalized_vec();
 
     // TODO Crashes triangulation
     // let normal_vec = Vec3A::X;
 
-    // Plane from point and normal
     let plane = Plane::new(mesh_center, normal_vec);
-
-    // Execute the slice
     let meshes = slice_mesh(plane, mesh);
-
-    // Spawn the fragments from the meshes at the pos
-    spawn_fragment(meshes, plane.origin(), materials, meshes_assets, commands);
+    spawn_fragments(meshes, plane.origin(), materials, meshes_assets, commands);
 }
 
 /// Operate the slice on a mesh
 pub fn slice_mesh(plane: Plane, mesh: &Mesh) -> Vec<Mesh> {
     let mut slice_mesh = SlicedMesh::from_bevy_mesh(mesh);
-
-    // Split in half the mesh builder into top and bottom mesh builders
     match internal_slice_mesh(plane, &mut slice_mesh) {
-        (None, None) => return Vec::new(),
-        (None, Some(bottom_slice)) => return vec![bottom_slice.to_bevy_mesh()],
-        (Some(top_slice), None) => return vec![top_slice.to_bevy_mesh()],
-        (Some(top_slice), Some(bottom_slice)) => {
-            return vec![top_slice.to_bevy_mesh(), bottom_slice.to_bevy_mesh()]
+        None => vec![],
+        Some((top_slice, bottom_slice)) => {
+            vec![top_slice.to_bevy_mesh(), bottom_slice.to_bevy_mesh()]
         }
     }
 }
@@ -117,7 +105,7 @@ pub fn slice_mesh(plane: Plane, mesh: &Mesh) -> Vec<Mesh> {
 fn internal_slice_mesh(
     plane: Plane,
     mesh_to_slice: &mut SlicedMesh,
-) -> (Option<SlicedMesh>, Option<SlicedMesh>) {
+) -> Option<(SlicedMesh, SlicedMesh)> {
     // Track the position of the vertices along the slice plane
     let mut sides = Vec::with_capacity(
         mesh_to_slice.vertices().len() + mesh_to_slice.sliced_face_vertices().len(),
@@ -128,23 +116,27 @@ fn internal_slice_mesh(
     let mut bottom_slice = SlicedMesh::initialize_with(&mesh_to_slice);
 
     // Add the vertices from the sliced mesh to the top and bottom mesh builders
-    for vertex in mesh_to_slice
+    for (vertex_id, vertex) in mesh_to_slice
         .vertices()
         .iter()
-        // TODO Why do we have a different sliced_vertices buffer here ?
+        // TODO Why do we have a different sliced_vertices buffer here ? COuld we avoid it ?
         .chain(mesh_to_slice.sliced_face_vertices().iter())
+        .enumerate()
     {
         let side = is_above_plane(vertex.pos(), plane);
         sides.push(side);
         // Vertices are split from top to bottom. If a vertex on the slicing plane, it will be fixed later
         match side {
-            PlaneSide::Top => top_slice.push_mapped_vertex(*vertex),
-            PlaneSide::Bottom => bottom_slice.push_mapped_vertex(*vertex),
-            PlaneSide::OnPlane => (),
+            PlaneSide::Top => top_slice.push_mapped_vertex(*vertex, vertex_id),
+            PlaneSide::Bottom => bottom_slice.push_mapped_vertex(*vertex, vertex_id),
+            PlaneSide::OnPlane => {
+                top_slice.push_mapped_vertex(*vertex, vertex_id);
+                bottom_slice.push_mapped_vertex(*vertex, vertex_id);
+            }
         }
     }
 
-    divide_triangles(
+    divide_mesh_triangles(
         mesh_to_slice,
         plane,
         &sides,
@@ -153,14 +145,13 @@ fn internal_slice_mesh(
     );
 
     // TODO Could we easily know beforehand if the mesh intersects the slicing plane ?
-    if top_slice.vertices().is_empty() {
-        return (None, Some(bottom_slice));
-    } else if bottom_slice.vertices().is_empty() {
-        return (Some(top_slice), None);
+    // TODO Could maybe at least do a convex hull/aabb check against the plane to return early if w are sure that there won't be an intersection.
+    if top_slice.vertices().is_empty() || bottom_slice.vertices().is_empty() {
+        None
     } else {
         // Fill the newly created sliced face
         fill_sliced_face(&plane, &mut top_slice, &mut bottom_slice);
-        (Some(top_slice), Some(bottom_slice))
+        Some((top_slice, bottom_slice))
     }
 }
 
@@ -243,62 +234,61 @@ pub enum TrianglePlaneIntersection {
     FlatTriangle,
 }
 
-// u32 with  3 side info packed on 6 bits ?
-// const TRIANGLES_SIDES_ARRAY: [TrianglePlaneIntersectionC; 42] = [];
 use lazy_static::lazy_static;
 lazy_static! {
+    // u32 with  3 side info packed on 6 bits ?
+    // const TRIANGLES_SIDES_ARRAY: [TrianglePlaneIntersectionC; 42] = [];
     static ref TRIANGLE_PLANE_INTERSECTIONS: HashMap<(PlaneSide,PlaneSide,PlaneSide), TrianglePlaneIntersection> = {
          HashMap::from([
-            // ((PlaneSide::Top, PlaneSide::Top, PlaneSide::Top),0.0),
-            // ((PlaneSide::Bottom, PlaneSide::Bottom, PlaneSide::Bottom),TrianglePlaneIntersectionC::Edges),
-           ((PlaneSide::Top, PlaneSide::OnPlane, PlaneSide::Top),TrianglePlaneIntersection::OneVertexTop(1)),
-           ((PlaneSide::OnPlane, PlaneSide::Top, PlaneSide::Top),TrianglePlaneIntersection::OneVertexTop(0)),
-           ((PlaneSide::Top, PlaneSide::Top, PlaneSide::OnPlane),TrianglePlaneIntersection::OneVertexTop(2)),
+            ((PlaneSide::OnPlane, PlaneSide::Top, PlaneSide::Top),TrianglePlaneIntersection::OneVertexTop(0)),
+            ((PlaneSide::Top, PlaneSide::OnPlane, PlaneSide::Top),TrianglePlaneIntersection::OneVertexTop(1)),
+            ((PlaneSide::Top, PlaneSide::Top, PlaneSide::OnPlane),TrianglePlaneIntersection::OneVertexTop(2)),
 
-           ((PlaneSide::Bottom, PlaneSide::Bottom, PlaneSide::OnPlane),TrianglePlaneIntersection::OneVertexBottom(2)),
-           ((PlaneSide::Bottom, PlaneSide::OnPlane, PlaneSide::Bottom),TrianglePlaneIntersection::OneVertexBottom(1)),
-           ((PlaneSide::OnPlane, PlaneSide::Bottom, PlaneSide::Bottom),TrianglePlaneIntersection::OneVertexBottom(0)),
+            ((PlaneSide::OnPlane, PlaneSide::Bottom, PlaneSide::Bottom),TrianglePlaneIntersection::OneVertexBottom(0)),
+            ((PlaneSide::Bottom, PlaneSide::OnPlane, PlaneSide::Bottom),TrianglePlaneIntersection::OneVertexBottom(1)),
+            ((PlaneSide::Bottom, PlaneSide::Bottom, PlaneSide::OnPlane),TrianglePlaneIntersection::OneVertexBottom(2)),
 
-           ((PlaneSide::Top, PlaneSide::OnPlane, PlaneSide::OnPlane),TrianglePlaneIntersection::OneEdgeTop((1,2))),
-           ((PlaneSide::OnPlane, PlaneSide::Top, PlaneSide::OnPlane),TrianglePlaneIntersection::OneEdgeTop((0,2))),
-           ((PlaneSide::OnPlane, PlaneSide::OnPlane, PlaneSide::Top),TrianglePlaneIntersection::OneEdgeTop((1,1))),
+            ((PlaneSide::OnPlane, PlaneSide::OnPlane, PlaneSide::Top),TrianglePlaneIntersection::OneEdgeTop((0,1))),
+            ((PlaneSide::Top, PlaneSide::OnPlane, PlaneSide::OnPlane),TrianglePlaneIntersection::OneEdgeTop((1,2))),
+            ((PlaneSide::OnPlane, PlaneSide::Top, PlaneSide::OnPlane),TrianglePlaneIntersection::OneEdgeTop((0,2))),
 
-           ((PlaneSide::OnPlane, PlaneSide::Bottom, PlaneSide::OnPlane),TrianglePlaneIntersection::OneEdgeBottom((0,2))),
-           ((PlaneSide::Bottom, PlaneSide::OnPlane, PlaneSide::OnPlane),TrianglePlaneIntersection::OneEdgeBottom((1,2))),
-           ((PlaneSide::OnPlane, PlaneSide::OnPlane, PlaneSide::Bottom),TrianglePlaneIntersection::OneEdgeBottom((0,1))),
 
-           // Edge indexes order is important for those cases. Top -> Bottom
-           ((PlaneSide::Top, PlaneSide::OnPlane, PlaneSide::Bottom),TrianglePlaneIntersection::OneVertexOneCrossedEdge{vertex:1, edge: (0,2)}),
-           ((PlaneSide::Top, PlaneSide::Bottom, PlaneSide::OnPlane),TrianglePlaneIntersection::OneVertexOneCrossedEdge{vertex:2, edge: (0,1)}),
-           ((PlaneSide::Bottom, PlaneSide::Top, PlaneSide::OnPlane),TrianglePlaneIntersection::OneVertexOneCrossedEdge{vertex:2, edge: (1,0)}),
-           ((PlaneSide::Bottom, PlaneSide::OnPlane, PlaneSide::Top),TrianglePlaneIntersection::OneVertexOneCrossedEdge{vertex:1, edge: (2,0)}),
-           ((PlaneSide::OnPlane, PlaneSide::Top, PlaneSide::Bottom),TrianglePlaneIntersection::OneVertexOneCrossedEdge{vertex:0, edge: (1,2)}),
-           ((PlaneSide::OnPlane, PlaneSide::Bottom, PlaneSide::Top),TrianglePlaneIntersection::OneVertexOneCrossedEdge{vertex:0, edge: (2,1)}),
+            ((PlaneSide::OnPlane, PlaneSide::OnPlane, PlaneSide::Bottom),TrianglePlaneIntersection::OneEdgeBottom((0,1))),
+            ((PlaneSide::Bottom, PlaneSide::OnPlane, PlaneSide::OnPlane),TrianglePlaneIntersection::OneEdgeBottom((1,2))),
+            ((PlaneSide::OnPlane, PlaneSide::Bottom, PlaneSide::OnPlane),TrianglePlaneIntersection::OneEdgeBottom((0,2))),
 
-           ((PlaneSide::Top, PlaneSide::Top, PlaneSide::Bottom),TrianglePlaneIntersection::TwoCrossedEdgesTopSide{verts:[0,1,2]}),
-           ((PlaneSide::Top, PlaneSide::Bottom, PlaneSide::Top),TrianglePlaneIntersection::TwoCrossedEdgesTopSide{verts:[2,0,1]}),
-           ((PlaneSide::Bottom, PlaneSide::Top, PlaneSide::Top),TrianglePlaneIntersection::TwoCrossedEdgesTopSide{verts:[1,2,0]}),
+            // Edge indexes order is important for those cases. Top -> Bottom
+            ((PlaneSide::OnPlane, PlaneSide::Top, PlaneSide::Bottom),TrianglePlaneIntersection::OneVertexOneCrossedEdge{vertex:0, edge: (1,2)}),
+            ((PlaneSide::OnPlane, PlaneSide::Bottom, PlaneSide::Top),TrianglePlaneIntersection::OneVertexOneCrossedEdge{vertex:0, edge: (2,1)}),
+            ((PlaneSide::Bottom, PlaneSide::OnPlane, PlaneSide::Top),TrianglePlaneIntersection::OneVertexOneCrossedEdge{vertex:1, edge: (2,0)}),
+            ((PlaneSide::Top, PlaneSide::OnPlane, PlaneSide::Bottom),TrianglePlaneIntersection::OneVertexOneCrossedEdge{vertex:1, edge: (0,2)}),
+            ((PlaneSide::Top, PlaneSide::Bottom, PlaneSide::OnPlane),TrianglePlaneIntersection::OneVertexOneCrossedEdge{vertex:2, edge: (0,1)}),
+            ((PlaneSide::Bottom, PlaneSide::Top, PlaneSide::OnPlane),TrianglePlaneIntersection::OneVertexOneCrossedEdge{vertex:2, edge: (1,0)}),
 
-           ((PlaneSide::Top, PlaneSide::Bottom, PlaneSide::Bottom),TrianglePlaneIntersection::TwoCrossedEdgesBottomSide{verts:[1,2,0]}),
-           ((PlaneSide::Bottom, PlaneSide::Top, PlaneSide::Bottom),TrianglePlaneIntersection::TwoCrossedEdgesBottomSide{verts:[2,0,1]}),
-           ((PlaneSide::Bottom, PlaneSide::Bottom, PlaneSide::Top),TrianglePlaneIntersection::TwoCrossedEdgesBottomSide{verts:[0,1,2]}),
+            ((PlaneSide::Top, PlaneSide::Top, PlaneSide::Bottom),TrianglePlaneIntersection::TwoCrossedEdgesTopSide{verts:[0,1,2]}),
+            ((PlaneSide::Top, PlaneSide::Bottom, PlaneSide::Top),TrianglePlaneIntersection::TwoCrossedEdgesTopSide{verts:[2,0,1]}),
+            ((PlaneSide::Bottom, PlaneSide::Top, PlaneSide::Top),TrianglePlaneIntersection::TwoCrossedEdgesTopSide{verts:[1,2,0]}),
 
-           ((PlaneSide::OnPlane, PlaneSide::OnPlane, PlaneSide::OnPlane),TrianglePlaneIntersection::FlatTriangle),
+            ((PlaneSide::Top, PlaneSide::Bottom, PlaneSide::Bottom),TrianglePlaneIntersection::TwoCrossedEdgesBottomSide{verts:[1,2,0]}),
+            ((PlaneSide::Bottom, PlaneSide::Top, PlaneSide::Bottom),TrianglePlaneIntersection::TwoCrossedEdgesBottomSide{verts:[2,0,1]}),
+            ((PlaneSide::Bottom, PlaneSide::Bottom, PlaneSide::Top),TrianglePlaneIntersection::TwoCrossedEdgesBottomSide{verts:[0,1,2]}),
+
+            ((PlaneSide::OnPlane, PlaneSide::OnPlane, PlaneSide::OnPlane),TrianglePlaneIntersection::FlatTriangle),
         ])
     };
 }
 
 /// Divide triangles among the bottom and top slices
-pub fn divide_triangles(
-    original_mesh: &mut SlicedMesh,
+pub fn divide_mesh_triangles(
+    sliced_mesh: &mut SlicedMesh,
     plane: Plane,
     sides: &Vec<PlaneSide>,
     top_slice: &mut SlicedMesh,
     bottom_slice: &mut SlicedMesh,
 ) {
-    for triangle in original_mesh.indices().chunks_exact(3) {
+    for triangle in sliced_mesh.indices().chunks_exact(3) {
         let (v1, v2, v3) = (triangle[0], triangle[1], triangle[2]);
-        // TODO Optimization: Those two cases should eb the more common ones. See if they need to be kept separated
+        // TODO Optimization: Those two cases should be the more common ones. See if they need to be kept separated
         // If the triangle is completly above the slicing plane
         if sides[v1 as usize] == PlaneSide::Top
             && sides[v2 as usize] == PlaneSide::Top
@@ -330,7 +320,7 @@ pub fn divide_triangles(
                         triangle[edge.0 as usize],
                         triangle[edge.1 as usize],
                     ],
-                    original_mesh,
+                    sliced_mesh,
                     plane,
                 );
             }
@@ -347,7 +337,7 @@ pub fn divide_triangles(
                     bottom_slice,
                     verts_indexes,
                     true,
-                    &original_mesh,
+                    &sliced_mesh,
                 );
             }
             TrianglePlaneIntersection::TwoCrossedEdgesBottomSide { verts } => {
@@ -362,24 +352,50 @@ pub fn divide_triangles(
                     bottom_slice,
                     verts_indexes,
                     false,
-                    &original_mesh,
+                    &sliced_mesh,
                 );
             }
-            TrianglePlaneIntersection::OneVertexTop(vertex) => {
-                // TODO Add vertex to sliced face, we don't care yet about uvs and normals. No need to add vertex to original mesh since it is not a new vertex
-                top_slice.push_mapped_triangle(triangle[0], triangle[1], triangle[2])
+            TrianglePlaneIntersection::OneVertexTop(v_index) => {
+                top_slice.push_mapped_triangle(triangle[0], triangle[1], triangle[2]);
+                let vert = sliced_mesh.vert(triangle[*v_index as usize]);
+                // TODO Could we push directly in normal vertices buffer (use a slice for tirangulation)
+                top_slice.sliced_face_vertices_mut().push(vert.clone());
+                bottom_slice.sliced_face_vertices_mut().push(vert.clone());
             }
-            TrianglePlaneIntersection::OneVertexBottom(vertex) => {
-                // TODO Add vertex to sliced face
-                bottom_slice.push_mapped_triangle(triangle[0], triangle[1], triangle[2])
+            TrianglePlaneIntersection::OneVertexBottom(v_index) => {
+                bottom_slice.push_mapped_triangle(triangle[0], triangle[1], triangle[2]);
+                let vert = sliced_mesh.vert(triangle[*v_index as usize]);
+                // TODO Could we push directly in normal vertices buffer
+                top_slice.sliced_face_vertices_mut().push(vert.clone());
+                bottom_slice.sliced_face_vertices_mut().push(vert.clone());
             }
             TrianglePlaneIntersection::OneEdgeBottom(edge) => {
                 // TODO Add edges vertices to sliced face
-                bottom_slice.push_mapped_triangle(triangle[0], triangle[1], triangle[2])
+                bottom_slice.push_mapped_triangle(triangle[0], triangle[1], triangle[2]);
+
+                let vert = sliced_mesh.vert(triangle[edge.0 as usize]);
+                // TODO Could we push directly in normal vertices buffer (use a slice for tirangulation)
+                top_slice.sliced_face_vertices_mut().push(vert.clone());
+                bottom_slice.sliced_face_vertices_mut().push(vert.clone());
+
+                let vert = sliced_mesh.vert(triangle[edge.1 as usize]);
+                // TODO Could we push directly in normal vertices buffer (use a slice for tirangulation)
+                top_slice.sliced_face_vertices_mut().push(vert.clone());
+                bottom_slice.sliced_face_vertices_mut().push(vert.clone());
             }
             TrianglePlaneIntersection::OneEdgeTop(edge) => {
                 // TODO Add edges vertices to sliced face
-                top_slice.push_mapped_triangle(triangle[0], triangle[1], triangle[2])
+                top_slice.push_mapped_triangle(triangle[0], triangle[1], triangle[2]);
+
+                let vert = sliced_mesh.vert(triangle[edge.0 as usize]);
+                // TODO Could we push directly in normal vertices buffer (use a slice for tirangulation)
+                top_slice.sliced_face_vertices_mut().push(vert.clone());
+                bottom_slice.sliced_face_vertices_mut().push(vert.clone());
+
+                let vert = sliced_mesh.vert(triangle[edge.1 as usize]);
+                // TODO Could we push directly in normal vertices buffer (use a slice for tirangulation)
+                top_slice.sliced_face_vertices_mut().push(vert.clone());
+                bottom_slice.sliced_face_vertices_mut().push(vert.clone());
             }
             TrianglePlaneIntersection::FlatTriangle => {
                 // TODO Handle flat triangles ont the slicing plane. We may just discard them (indices) but keep their vertices
@@ -389,21 +405,20 @@ pub fn divide_triangles(
     }
 }
 
-fn spawn_fragment(
+fn spawn_fragments(
     meshes: Vec<Mesh>,
     pos: Vec3A,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     meshes_assets: &mut ResMut<Assets<Mesh>>,
     commands: &mut Commands,
 ) {
-    //Spawn the fragment for each mesh
     for mesh in meshes {
         let mesh_handle = meshes_assets.add(mesh.clone());
-        spawn_fragment_internal(&mesh, &mesh_handle, materials, commands, pos.into());
+        internal_spawn_fragment(&mesh, &mesh_handle, materials, commands, pos.into());
     }
 }
 
-fn spawn_fragment_internal(
+fn internal_spawn_fragment(
     fragment_mesh: &Mesh,
     fragment_mesh_handle: &Handle<Mesh>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
@@ -431,81 +446,6 @@ fn spawn_fragment_internal(
     ));
 }
 
-pub fn on_plane_triangle(
-    top_mesh_builder: &mut SlicedMesh,
-    bottom_mesh_builder: &mut SlicedMesh,
-    side: &Vec<PlaneSide>,
-    vertices: [u64; 3],
-    on_plane: Vec<usize>,
-    mesh_builder: &SlicedMesh,
-    plane: Plane,
-) {
-    if on_plane.len() == 1 {
-        let out_of_plane_vertices: Vec<u64> = vertices
-            .iter()
-            .enumerate()
-            .filter_map(|(j, &v)| if j != on_plane[0] { Some(v) } else { None })
-            .collect();
-
-        if side[out_of_plane_vertices[0] as usize] == PlaneSide::Top
-            && side[out_of_plane_vertices[1] as usize] == PlaneSide::Top
-        {
-            top_mesh_builder.push_mapped_triangle(vertices[0], vertices[1], vertices[2]);
-        } else if side[out_of_plane_vertices[0] as usize] == PlaneSide::Bottom
-            && side[out_of_plane_vertices[1] as usize] == PlaneSide::Bottom
-        {
-            bottom_mesh_builder.push_mapped_triangle(vertices[0], vertices[1], vertices[2]);
-        } else if side[out_of_plane_vertices[0] as usize] == PlaneSide::Bottom
-            && side[out_of_plane_vertices[1] as usize] == PlaneSide::Top
-        {
-            split_on_plane_triangle(
-                top_mesh_builder,
-                bottom_mesh_builder,
-                [
-                    vertices[on_plane[0]],
-                    out_of_plane_vertices[1],
-                    out_of_plane_vertices[0],
-                ],
-                mesh_builder,
-                plane,
-            );
-        } else {
-            split_on_plane_triangle(
-                top_mesh_builder,
-                bottom_mesh_builder,
-                [
-                    vertices[on_plane[0]],
-                    out_of_plane_vertices[0],
-                    out_of_plane_vertices[1],
-                ],
-                mesh_builder,
-                plane,
-            );
-        }
-    } else if on_plane.len() == 2 {
-        let out_of_plane_vertex: Vec<u64> = vertices
-            .iter()
-            .enumerate()
-            .filter_map(|(j, &v)| {
-                if j != on_plane[0] || j != on_plane[1] {
-                    Some(v)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if side[out_of_plane_vertex[0] as usize] == PlaneSide::Top {
-            top_mesh_builder.push_mapped_triangle(vertices[0], vertices[1], vertices[2]);
-        } else {
-            bottom_mesh_builder.push_mapped_triangle(vertices[0], vertices[1], vertices[2]);
-        }
-    } else {
-        // TODO Handle flat triangles ont the slicing plane. We may just discard them (indices) but keep their vertices
-        warn!("Handle flat triangles ont the slicing plane. We may just discard them (indices) but keep their vertices");
-    }
-}
-
 ///            * top
 ///         /  |
 ///       /    |
@@ -516,21 +456,20 @@ pub fn on_plane_triangle(
 ///
 /// The vertices are given as [on plane, top, bottom]:
 fn split_on_plane_triangle(
-    top_mesh_builder: &mut SlicedMesh,
-    bottom_mesh_builder: &mut SlicedMesh,
+    top_slice: &mut SlicedMesh,
+    bottom_slice: &mut SlicedMesh,
     vertices: [u64; 3],
-    mesh_builder: &SlicedMesh,
+    sliced_mesh: &SlicedMesh,
     plane: Plane,
 ) {
     let mut v = vec![MeshBuilderVertex::new(Vec3A::ZERO, Vec2::ZERO, Vec3A::ZERO); 3];
 
     for (i, vertex_id) in vertices.iter().enumerate() {
         let v_id = *vertex_id as usize;
-        if v_id < mesh_builder.vertices().len() {
-            v[i] = mesh_builder.vertices()[v_id as usize];
+        if v_id < sliced_mesh.vertices().len() {
+            v[i] = sliced_mesh.vertices()[v_id as usize];
         } else {
-            v[i] =
-                mesh_builder.sliced_face_vertices()[v_id as usize - mesh_builder.vertices().len()];
+            v[i] = sliced_mesh.sliced_face_vertices()[v_id as usize - sliced_mesh.vertices().len()];
         }
     }
 
@@ -539,33 +478,33 @@ fn split_on_plane_triangle(
     let norm = (v[1].normal() + s * (v[2].normal() - v[1].normal())).normalize();
     let uv: Vec2 = v[1].uv() + s * (v[2].uv() - v[1].uv());
 
-    top_mesh_builder.add_sliced_vertex(m, uv, norm);
-    bottom_mesh_builder.add_sliced_vertex(m, uv, norm);
+    top_slice.add_sliced_vertex(m, uv, norm);
+    bottom_slice.add_sliced_vertex(m, uv, norm);
 
-    let id_top = top_mesh_builder.vertices().len() as VertexId - 1;
-    let id_bottom = bottom_mesh_builder.vertices().len() as VertexId - 1;
+    let id_top = top_slice.vertices().len() as VertexId - 1;
+    let id_bottom = bottom_slice.vertices().len() as VertexId - 1;
 
-    top_mesh_builder.push_triangle(
+    top_slice.push_triangle(
         id_top,
-        top_mesh_builder.index_map()[vertices[0] as usize],
-        top_mesh_builder.index_map()[vertices[1] as usize],
+        top_slice.index_map()[vertices[0] as usize],
+        top_slice.index_map()[vertices[1] as usize],
     );
 
-    top_mesh_builder.push_triangle(
+    top_slice.push_triangle(
         id_bottom,
-        top_mesh_builder.index_map()[vertices[2] as usize],
-        top_mesh_builder.index_map()[vertices[0] as usize],
+        top_slice.index_map()[vertices[2] as usize],
+        top_slice.index_map()[vertices[0] as usize],
     );
 
-    let top_sliced_vertices_nbr = top_mesh_builder.sliced_face_vertices().len() as VertexId;
-    let bottom_sliced_vertices_nbr = bottom_mesh_builder.sliced_face_vertices().len() as VertexId;
+    let top_sliced_vertices_nbr = top_slice.sliced_face_vertices().len() as VertexId;
+    let bottom_sliced_vertices_nbr = bottom_slice.sliced_face_vertices().len() as VertexId;
 
     // Need to be careful with constrained edges orientation:
-    top_mesh_builder.constraints_mut().push(Edge::new(
+    top_slice.constraints_mut().push(Edge::new(
         top_sliced_vertices_nbr - 2,
         top_sliced_vertices_nbr - 1,
     ));
-    bottom_mesh_builder.constraints_mut().push(Edge::new(
+    bottom_slice.constraints_mut().push(Edge::new(
         bottom_sliced_vertices_nbr - 1,
         bottom_sliced_vertices_nbr - 2,
     ));
@@ -594,20 +533,20 @@ fn split_on_plane_triangle(
 ///```
 fn split_intersected_triangle(
     plane: Plane,
-    top_mesh_builder: &mut SlicedMesh,
-    bottom_mesh_builder: &mut SlicedMesh,
+    top_slice: &mut SlicedMesh,
+    bottom_slice: &mut SlicedMesh,
     verts_indexes: [VertexId; 3],
     two_vertices_on_top: bool,
-    mesh_builder: &SlicedMesh,
+    sliced_mesh: &SlicedMesh,
 ) {
     let mut v = vec![MeshBuilderVertex::new(Vec3A::ZERO, Vec2::ZERO, Vec3A::ZERO); 3];
 
     for (i, vertex_id) in verts_indexes.iter().enumerate() {
         let v_id = *vertex_id as usize;
-        if v_id < mesh_builder.vertices().len() {
-            v[i] = mesh_builder.vertices()[v_id];
+        if v_id < sliced_mesh.vertices().len() {
+            v[i] = sliced_mesh.vertices()[v_id];
         } else {
-            v[i] = mesh_builder.sliced_face_vertices()[v_id - mesh_builder.vertices().len()];
+            v[i] = sliced_mesh.sliced_face_vertices()[v_id - sliced_mesh.vertices().len()];
         }
     }
 
@@ -641,84 +580,82 @@ fn split_intersected_triangle(
             let uv23: Vec2 = v[1].uv() + s23 * (v[2].uv() - v[1].uv());
 
             // Add the new vertices to each mesh builder
-            top_mesh_builder.add_sliced_vertex(v13, uv13, norm13);
-            top_mesh_builder.add_sliced_vertex(v23, uv23, norm23);
+            top_slice.add_sliced_vertex(v13, uv13, norm13);
+            top_slice.add_sliced_vertex(v23, uv23, norm23);
 
-            bottom_mesh_builder.add_sliced_vertex(v13, uv13, norm13);
-            bottom_mesh_builder.add_sliced_vertex(v23, uv23, norm23);
+            bottom_slice.add_sliced_vertex(v13, uv13, norm13);
+            bottom_slice.add_sliced_vertex(v23, uv23, norm23);
 
             // Ids of the vertices for each mesh builder
-            let id13_top = top_mesh_builder.vertices().len() as VertexId - 2;
-            let id23_top = top_mesh_builder.vertices().len() as VertexId - 1;
-            let id13_bottom = bottom_mesh_builder.vertices().len() as VertexId - 2;
-            let id23_bottom = bottom_mesh_builder.vertices().len() as VertexId - 1;
+            let id13_top = top_slice.vertices().len() as VertexId - 2;
+            let id23_top = top_slice.vertices().len() as VertexId - 1;
+            let id13_bottom = bottom_slice.vertices().len() as VertexId - 2;
+            let id23_bottom = bottom_slice.vertices().len() as VertexId - 1;
 
             if two_vertices_on_top {
                 // Add two triangles on top
-                top_mesh_builder.push_triangle(
+                top_slice.push_triangle(
                     id23_top,
                     id13_top,
-                    top_mesh_builder.index_map()[verts_indexes[1] as usize],
+                    top_slice.index_map()[verts_indexes[1] as usize],
                 );
-                top_mesh_builder.push_triangle(
+                top_slice.push_triangle(
                     id13_top,
-                    top_mesh_builder.index_map()[verts_indexes[0] as usize],
-                    top_mesh_builder.index_map()[verts_indexes[1] as usize],
+                    top_slice.index_map()[verts_indexes[0] as usize],
+                    top_slice.index_map()[verts_indexes[1] as usize],
                 );
 
                 // And one to the bottom
-                bottom_mesh_builder.push_triangle(
-                    bottom_mesh_builder.index_map()[verts_indexes[2] as usize],
+                bottom_slice.push_triangle(
+                    bottom_slice.index_map()[verts_indexes[2] as usize],
                     id13_bottom,
                     id23_bottom,
                 );
 
-                let top_sliced_vertices_nbr =
-                    top_mesh_builder.sliced_face_vertices().len() as VertexId;
+                let top_sliced_vertices_nbr = top_slice.sliced_face_vertices().len() as VertexId;
                 let bottom_sliced_vertices_nbr =
-                    bottom_mesh_builder.sliced_face_vertices().len() as VertexId;
+                    bottom_slice.sliced_face_vertices().len() as VertexId;
 
                 // Need to be carfull with constrained edges orientation:
-                top_mesh_builder.constraints_mut().push(Edge::new(
+                top_slice.constraints_mut().push(Edge::new(
                     top_sliced_vertices_nbr - 2,
                     top_sliced_vertices_nbr - 1,
                 ));
-                bottom_mesh_builder.constraints_mut().push(Edge::new(
+                bottom_slice.constraints_mut().push(Edge::new(
                     bottom_sliced_vertices_nbr - 1,
                     bottom_sliced_vertices_nbr - 2,
                 ));
             } else {
                 // Add two triangles bellow
-                bottom_mesh_builder.push_triangle(
-                    bottom_mesh_builder.index_map()[verts_indexes[0] as usize],
-                    bottom_mesh_builder.index_map()[verts_indexes[1] as usize],
+                bottom_slice.push_triangle(
+                    bottom_slice.index_map()[verts_indexes[0] as usize],
+                    bottom_slice.index_map()[verts_indexes[1] as usize],
                     id13_bottom,
                 );
 
-                bottom_mesh_builder.push_triangle(
-                    bottom_mesh_builder.index_map()[verts_indexes[1] as usize],
+                bottom_slice.push_triangle(
+                    bottom_slice.index_map()[verts_indexes[1] as usize],
                     id23_bottom,
                     id13_bottom,
                 );
 
                 //And one on top
-                top_mesh_builder.push_triangle(
+                top_slice.push_triangle(
                     id13_top,
                     id23_top,
-                    top_mesh_builder.index_map()[verts_indexes[2] as usize],
+                    top_slice.index_map()[verts_indexes[2] as usize],
                 );
 
-                let top_sliced_vertices_nbr =
-                    top_mesh_builder.sliced_face_vertices().len() as VertexId;
+                let top_sliced_vertices_nbr = top_slice.sliced_face_vertices().len() as VertexId;
                 let bottom_sliced_vertices_nbr =
-                    bottom_mesh_builder.sliced_face_vertices().len() as VertexId;
+                    bottom_slice.sliced_face_vertices().len() as VertexId;
 
                 // Need to be carfull with constrained edges orientation:
-                top_mesh_builder.constraints_mut().push(Edge::new(
+                top_slice.constraints_mut().push(Edge::new(
                     top_sliced_vertices_nbr - 1,
                     top_sliced_vertices_nbr - 2,
                 ));
-                bottom_mesh_builder.constraints_mut().push(Edge::new(
+                bottom_slice.constraints_mut().push(Edge::new(
                     bottom_sliced_vertices_nbr - 2,
                     bottom_sliced_vertices_nbr - 1,
                 ));

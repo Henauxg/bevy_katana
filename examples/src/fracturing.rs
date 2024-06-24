@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 use bevy::{
     app::{App, Startup},
@@ -13,7 +13,7 @@ use bevy::{
     transform::components::Transform,
     DefaultPlugins,
 };
-use bevy_ghx_destruction::{slicing::slicing::fragment_mesh, types::SlicedMesh};
+use bevy_ghx_destruction::{slicing::slicing::slice_mesh_iterative, types::SlicedMesh};
 use bevy_mod_raycast::prelude::*;
 use bevy_rapier3d::{
     dynamics::{FixedJointBuilder, ImpulseJoint, RigidBody},
@@ -53,7 +53,7 @@ fn setup(
     // TODO Do not compute trimeshes. We just need aabbs
     let trimesh = create_parry_trimesh(&SlicedMesh::from_bevy_mesh(&mesh));
 
-    let meshes = fragment_mesh(&mesh, 1);
+    let meshes = slice_mesh_iterative(&mesh, 1);
 
     // TODO Less back & forth between != mesh formats
     let chunks = create_chunks(&meshes);

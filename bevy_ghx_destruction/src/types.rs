@@ -272,7 +272,7 @@ pub struct SlicedMesh {
     vertices: Vec<MeshBuilderVertex>,
     indices: Vec<VertexId>,
     sliced_face_vertices: Vec<MeshBuilderVertex>,
-    /// Mapping which gives the id of a vertex in  from the original mesh to the sliced mesh vertex
+    /// Mapping which gives the id of a vertex in the mesh slice from the id of the vertex in the mesh being sliced. Sparse array
     index_map: Vec<VertexId>,
     constraints: Vec<Edge>,
 }
@@ -296,8 +296,9 @@ impl SlicedMesh {
         SlicedMesh::new(
             Vec::new(), // TODO Capacity ?
             Vec::new(), // TODO Capacity ?
-            // vec![0; mesh_builder.vertices().len() + mesh_builder.sliced_face_vertices().len()],
-            Vec::with_capacity(mesh.vertices().len() + mesh.sliced_face_vertices().len()),
+            // TODO Do we need a custom type to use as an option ?
+            // Index map is sparse
+            vec![0; mesh.vertices().len() + mesh.sliced_face_vertices().len()],
         )
     }
 
@@ -324,8 +325,16 @@ impl SlicedMesh {
         &mut self.constraints
     }
 
+    pub fn vert(&self, vert_index: VertexId) -> &MeshBuilderVertex {
+        &self.vertices[vert_index as usize]
+    }
+
     pub fn vertices(&self) -> &Vec<MeshBuilderVertex> {
         &self.vertices
+    }
+
+    pub fn vertices_mut(&mut self) -> &mut Vec<MeshBuilderVertex> {
+        &mut self.vertices
     }
 
     pub fn sliced_face_vertices(&self) -> &Vec<MeshBuilderVertex> {
@@ -354,9 +363,9 @@ impl SlicedMesh {
         self.sliced_face_vertices.push(vertex);
     }
 
-    pub fn push_mapped_vertex(&mut self, vertex: MeshBuilderVertex) {
+    pub fn push_mapped_vertex(&mut self, vertex: MeshBuilderVertex, original_vertex_id: usize) {
         self.vertices.push(vertex);
-        self.index_map.push(self.vertices.len() as VertexId - 1);
+        self.index_map[original_vertex_id] = self.vertices.len() as VertexId - 1;
     }
 
     pub fn push_mapped_triangle(&mut self, v1: VertexId, v2: VertexId, v3: VertexId) {

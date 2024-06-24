@@ -9,7 +9,7 @@ use bevy::{
 };
 
 use bevy_ghx_destruction::{
-    slicing::slicing::{fragment_mesh, slice_mesh},
+    slicing::slicing::{slice_mesh, slice_mesh_iterative},
     types::Plane,
 };
 use bevy_mod_billboard::plugin::BillboardPlugin;
@@ -244,7 +244,7 @@ fn spawn_fragmented_object(
 
         let mesh = Cuboid::new(1., 1., 1.).mesh();
 
-        let fragments = fragment_mesh(&mesh, 10);
+        let fragments = slice_mesh_iterative(&mesh, 10);
         spawn_fragment(
             fragments.into(),
             &mut materials,
