@@ -13,7 +13,7 @@ use bevy::{
     transform::components::Transform,
     DefaultPlugins,
 };
-use bevy_ghx_destruction::{slicing::slicing::slice_mesh_iterative, types::SlicedMesh};
+use bevy_ghx_destruction::slicing::slicing::slice_bevy_mesh_iterative;
 use bevy_mod_raycast::prelude::*;
 use bevy_rapier3d::{
     dynamics::{FixedJointBuilder, ImpulseJoint, RigidBody},
@@ -51,98 +51,98 @@ fn setup(
     // let mesh_aabb = Cuboid::new(1., 1., 1.).mesh().compute_aabb().unwrap();
 
     // TODO Do not compute trimeshes. We just need aabbs
-    let trimesh = create_parry_trimesh(&SlicedMesh::from_bevy_mesh(&mesh));
+    // let trimesh = create_parry_trimesh(&Mesh::from_bevy_mesh(&mesh));
 
-    let meshes = slice_mesh_iterative(&mesh, 1);
+    // let meshes = slice_bevy_mesh_iterative(&mesh, 1);
 
-    // TODO Less back & forth between != mesh formats
-    let chunks = create_chunks(&meshes);
+    // // TODO Less back & forth between != mesh formats
+    // let chunks = create_chunks(&meshes);
 
-    let (translations, joints) =
-        create_joints(&chunks, &trimesh.compute_aabb(&Isometry3::identity()));
+    // let (translations, joints) =
+    //     create_joints(&chunks, &trimesh.compute_aabb(&Isometry3::identity()));
 
-    spawn_entities(
-        commands,
-        materials,
-        meshes_assets,
-        &chunks,
-        &translations,
-        &joints,
-    );
+    // spawn_entities(
+    //     commands,
+    //     materials,
+    //     meshes_assets,
+    //     &chunks,
+    //     &translations,
+    //     &joints,
+    // );
 }
 
 fn spawn_entities(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes_assets: ResMut<Assets<Mesh>>,
-    chunks: &Vec<SlicedMesh>,
+    chunks: &Vec<Mesh>,
     translations: &Vec<Translation3<f32>>,
     joints: &HashMap<usize, Vec<usize>>,
 ) {
-    let mut entity_map = HashMap::new();
+    // let mut entity_map = HashMap::new();
 
-    for (i, chunk) in chunks.iter().enumerate() {
-        let mesh = chunk.to_bevy_mesh();
-        let entity = create_entity(
-            &mut materials,
-            &mut meshes_assets,
-            &mut commands,
-            &mesh,
-            translations[i],
-        );
+    // for (i, chunk) in chunks.iter().enumerate() {
+    //     let mesh = chunk.to_bevy_mesh();
+    //     let entity = create_entity(
+    //         &mut materials,
+    //         &mut meshes_assets,
+    //         &mut commands,
+    //         &mesh,
+    //         translations[i],
+    //     );
 
-        entity_map.insert(i, entity);
-    }
+    //     entity_map.insert(i, entity);
+    // }
 
-    for (i, joint_indices) in joints.iter() {
-        if let Some(&parent_entity) = entity_map.get(i) {
-            for &j in joint_indices.iter() {
-                if let Some(&child_entity) = entity_map.get(&j) {
-                    let joint = FixedJointBuilder::new().local_anchor1(Vec3::new(0.0, 0.0, 0.0));
+    // for (i, joint_indices) in joints.iter() {
+    //     if let Some(&parent_entity) = entity_map.get(i) {
+    //         for &j in joint_indices.iter() {
+    //             if let Some(&child_entity) = entity_map.get(&j) {
+    //                 let joint = FixedJointBuilder::new().local_anchor1(Vec3::new(0.0, 0.0, 0.0));
 
-                    commands
-                        .entity(child_entity)
-                        .insert(ImpulseJoint::new(parent_entity, joint));
-                }
-            }
-        }
-    }
+    //                 commands
+    //                     .entity(child_entity)
+    //                     .insert(ImpulseJoint::new(parent_entity, joint));
+    //             }
+    //         }
+    //     }
+    // }
 }
 
-fn create_joints(
-    chunks: &Vec<SlicedMesh>,
-    aabb: &Aabb,
-) -> (Vec<Translation3<f32>>, HashMap<usize, Vec<usize>>) {
-    let mut joints = HashMap::new();
-    let mut translations = vec![Translation::new(0.0, 0.0, 0.0); chunks.len()];
+// fn create_joints(
+//     chunks: &Vec<Mesh>,
+//     aabb: &Aabb,
+// ) -> (Vec<Translation3<f32>>, HashMap<usize, Vec<usize>>) {
+//     let mut joints = HashMap::new();
+//     let mut translations = vec![Translation::new(0.0, 0.0, 0.0); chunks.len()];
 
-    for (i, chunk1) in chunks.iter().enumerate() {
-        let mut joint = Vec::new();
+//     for (i, chunk1) in chunks.iter().enumerate() {
+//         let mut joint = Vec::new();
 
-        let trimesh1 = create_parry_trimesh(chunk1);
-        let translation1 = calculate_translation(aabb, &trimesh1);
-        let isometry1 = create_isometry(translation1.x, translation1.y, translation1.z, 0.);
+//         let trimesh1 = create_parry_trimesh(chunk1);
+//         let translation1 = calculate_translation(aabb, &trimesh1);
+//         let isometry1 = create_isometry(translation1.x, translation1.y, translation1.z, 0.);
 
-        translations[i] = translation1;
+//         translations[i] = translation1;
 
-        for (j, chunk2) in chunks.iter().enumerate() {
-            if i == j {
-                continue;
-            }
+//         for (j, chunk2) in chunks.iter().enumerate() {
+//             if i == j {
+//                 continue;
+//             }
 
-            let trimesh2 = create_parry_trimesh(chunk2);
-            let translation2 = calculate_translation(aabb, &trimesh2);
-            let isometry2 = create_isometry(translation2.x, translation2.y, translation2.z, 0.);
+//             let trimesh2 = create_parry_trimesh(chunk2);
+//             let translation2 = calculate_translation(aabb, &trimesh2);
+//             let isometry2 = create_isometry(translation2.x, translation2.y, translation2.z, 0.);
 
-            if check_collision(&trimesh1, &isometry1, &trimesh2, &isometry2) {
-                joint.push(j);
-            }
-        }
-        joints.insert(i, joint);
-    }
+//             if check_collision(&trimesh1, &isometry1, &trimesh2, &isometry2) {
+//                 joint.push(j);
+//             }
+//         }
+//         joints.insert(i, joint);
+//     }
 
-    (translations, joints)
-}
+//     (translations, joints)
+// }
 
 fn create_entity(
     materials: &mut ResMut<Assets<StandardMaterial>>,
@@ -187,35 +187,35 @@ fn create_isometry(tx: f32, ty: f32, tz: f32, angle: f32) -> Isometry3<f32> {
     Isometry3::from_parts(translation, rotation)
 }
 
-fn create_parry_trimesh(chunk: &SlicedMesh) -> TriMesh {
-    let vertices = chunk.vertices();
-    let mut parry_vertices = Vec::new();
-    for vertex in vertices {
-        let pos = vertex.pos();
-        parry_vertices.push(Point::new(pos.x, pos.y, pos.z));
-    }
+// fn create_parry_trimesh(chunk: &Mesh) -> TriMesh {
+//     let vertices = chunk.vertices();
+//     let mut parry_vertices = Vec::new();
+//     for vertex in vertices {
+//         let pos = vertex.pos();
+//         parry_vertices.push(Point::new(pos.x, pos.y, pos.z));
+//     }
 
-    let triangles = chunk.indices();
-    let mut parry_indices = Vec::new();
-    for triangle_id in (0..triangles.len()).step_by(3) {
-        parry_indices.push([
-            triangles[triangle_id] as u32,
-            triangles[triangle_id + 1] as u32,
-            triangles[triangle_id + 2] as u32,
-        ]);
-    }
+//     let triangles = chunk.indices();
+//     let mut parry_indices = Vec::new();
+//     for triangle_id in (0..triangles.len()).step_by(3) {
+//         parry_indices.push([
+//             triangles[triangle_id] as u32,
+//             triangles[triangle_id + 1] as u32,
+//             triangles[triangle_id + 2] as u32,
+//         ]);
+//     }
 
-    TriMesh::new(parry_vertices, parry_indices)
-}
+//     TriMesh::new(parry_vertices, parry_indices)
+// }
 
-fn create_chunks(meshes: &Vec<Mesh>) -> Vec<SlicedMesh> {
-    let mut chunks = Vec::new();
-    for mesh in meshes {
-        chunks.push(SlicedMesh::from_bevy_mesh(mesh));
-    }
+// fn create_chunks(meshes: &Vec<Mesh>) -> Vec<Mesh> {
+//     let mut chunks = Vec::new();
+//     for mesh in meshes {
+//         chunks.push(Mesh::from_bevy_mesh(mesh));
+//     }
 
-    chunks
-}
+//     chunks
+// }
 
 fn check_collision(
     shape1: &dyn Shape,

@@ -9,7 +9,7 @@ use bevy::{
 };
 
 use bevy_ghx_destruction::{
-    slicing::slicing::{slice_mesh, slice_mesh_iterative},
+    slicing::slicing::{slice_bevy_mesh, slice_bevy_mesh_iterative},
     types::Plane,
 };
 use bevy_mod_billboard::plugin::BillboardPlugin;
@@ -186,7 +186,7 @@ fn slice_from_mouse(
 
             let plane = Plane::new(local_begin, (local_qr.cross(local_qs).normalize()).into());
 
-            let meshes = slice_mesh(plane, &mesh);
+            let meshes = slice_bevy_mesh(plane, &mesh);
 
             commands.entity(event.entity).despawn();
 
@@ -244,7 +244,7 @@ fn spawn_fragmented_object(
 
         let mesh = Cuboid::new(1., 1., 1.).mesh();
 
-        let fragments = slice_mesh_iterative(&mesh, 10);
+        let fragments = slice_bevy_mesh_iterative(&mesh, 2);
         spawn_fragment(
             fragments.into(),
             &mut materials,

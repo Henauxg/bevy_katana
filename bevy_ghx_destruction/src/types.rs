@@ -1,3 +1,5 @@
+use bevy::render::mesh::Mesh as RenderMesh;
+use bevy::render::primitives::Aabb;
 use bevy::{
     math::{Vec2, Vec3A},
     prelude::Entity,
@@ -7,7 +9,11 @@ use bevy::{
     },
 };
 use bevy_rapier3d::dynamics::{ImpulseJoint, RigidBody};
-use ghx_constrained_delaunay::types::{Edge, VertexId};
+use ghx_constrained_delaunay::hashbrown::HashMap;
+use ghx_constrained_delaunay::types::VertexId;
+use glam::Vec3;
+
+use crate::utils::is_above_plane;
 
 trait Indexable {
     fn at(&self, idx: usize) -> usize;
@@ -220,323 +226,283 @@ impl Plane {
         }
     }
 
+    #[inline]
     pub fn origin(&self) -> Vec3A {
         *&self.origin_point
     }
 
+    #[inline]
     pub fn normal(&self) -> Vec3A {
         *&self.normal_vec
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct MeshBuilderVertex {
-    // TODO struct of arrays would probably be better
-    pos: Vec3A,
-    uv: Vec2,
-    normal: Vec3A,
+pub type Generation = u16;
+const UNSET_GENERATION: Generation = 0;
+const INITIAL_GENERATION: Generation = 1;
+
+#[derive(Debug, Clone)]
+pub struct VertexSideData {
+    pub side: PlaneSide,
+    pub generation: Generation,
 }
 
-impl MeshBuilderVertex {
-    pub fn new(pos: Vec3A, uv: Vec2, normal: Vec3A) -> MeshBuilderVertex {
-        MeshBuilderVertex { pos, uv, normal }
+const UNSET_SIDE_DATA: VertexSideData = VertexSideData {
+    side: PlaneSide::Bottom,
+    generation: UNSET_GENERATION,
+};
+
+/// Global vertices positions array containing all the original mesh vertices + all the vertices created during an iterative slice), during the slicing process a fragment only needs to index into this global array. Only reconstruct data when exporting the fragments as output mesh format
+#[derive(Debug, Clone)]
+pub struct SlicedMeshData {
+    buffers: MeshBuffers,
+    generation: Generation,
+    sides: Vec<VertexSideData>,
+}
+impl SlicedMeshData {
+    pub(crate) fn get_current_side_data(&mut self, v: VertexId, plane: Plane) -> PlaneSide {
+        let side = if self.sides[v as usize].generation == self.generation {
+            self.sides[v as usize].side
+        } else {
+            self.sides[v as usize].side =
+                is_above_plane(self.buffers.positions()[v as usize].into(), plane);
+            self.sides[v as usize].generation = self.generation;
+            self.sides[v as usize].side
+        };
+        side
     }
 
-    pub fn pos(&self) -> Vec3A {
-        *&self.pos
+    #[inline]
+    pub(crate) fn buffers(&self) -> &MeshBuffers {
+        &self.buffers
     }
 
-    pub fn uv(&self) -> Vec2 {
-        *&self.uv
+    #[inline]
+    pub(crate) fn pos(&self, v: VertexId) -> Vec3 {
+        self.buffers.positions()[v as usize]
     }
 
-    pub fn uv_mut(&mut self) -> &mut Vec2 {
-        &mut self.uv
+    #[inline]
+    pub(crate) fn normal(&self, v: VertexId) -> Vec3A {
+        self.buffers.normals()[v as usize]
     }
 
-    pub fn normal(&self) -> Vec3A {
-        *&self.normal
+    #[inline]
+    pub(crate) fn uv(&self, v: VertexId) -> Vec2 {
+        self.buffers.uvs()[v as usize]
     }
 
-    // pub fn normal_mut(&mut self, normal: &mut Vec3A) {
-    //     *&mut self.normal = *normal;
-    // }
+    pub(crate) fn push_new_vertex(&mut self, pos: Vec3, uv: Vec2, norm: Vec3A) -> VertexId {
+        self.buffers.positions.push(pos);
+        self.buffers.uvs.push(uv);
+        self.buffers.normals.push(norm);
 
-    pub fn normal_mut(&mut self) -> &mut Vec3A {
-        &mut self.normal
+        self.sides.push(UNSET_SIDE_DATA);
+
+        // TODO Check VertexId size
+        (self.buffers.positions.len() - 1) as VertexId
+    }
+
+    pub(crate) fn from_bevy_render_mesh(mesh: &RenderMesh) -> Self {
+        let buffers = MeshBuffers::from_bevy_render_mesh(mesh);
+        let sides = vec![UNSET_SIDE_DATA; buffers.positions().len()];
+        Self {
+            buffers,
+            generation: INITIAL_GENERATION,
+            sides,
+        }
+    }
+
+    pub(crate) fn update_generation(&mut self) {
+        if self.generation == Generation::MAX {
+            self.generation = INITIAL_GENERATION;
+            // Reset sides buffer to unset data
+            for s in self.sides.iter_mut() {
+                *s = UNSET_SIDE_DATA;
+            }
+        } else {
+            self.generation += 1;
+        }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct SlicedMesh {
-    vertices: Vec<MeshBuilderVertex>,
-    indices: Vec<VertexId>,
-    sliced_face_vertices: Vec<MeshBuilderVertex>,
-    /// Mapping which gives the id of a vertex in the mesh slice from the id of the vertex in the mesh being sliced. Sparse array
-    index_map: Vec<VertexId>,
+pub struct MeshBuffers {
+    positions: Vec<Vec3>,
+    normals: Vec<Vec3A>,
+    uvs: Vec<Vec2>,
+}
+impl MeshBuffers {
+    pub fn new() -> Self {
+        Self {
+            positions: Vec::new(),
+            normals: Vec::new(),
+            uvs: Vec::new(),
+        }
+    }
+
+    pub fn from_buffers(positions: Vec<Vec3>, normals: Vec<Vec3A>, uvs: Vec<Vec2>) -> Self {
+        Self {
+            positions,
+            normals,
+            uvs,
+        }
+    }
+
+    pub fn from_bevy_render_mesh(mesh: &RenderMesh) -> Self {
+        // TODO Error & format handling
+        let positions: Vec<Vec3> = vertices_from_bevy_mesh(mesh);
+        let uvs = uv_from_bevy_mesh(mesh);
+        let normals = normal_from_bevy_mesh(mesh);
+        Self::from_buffers(positions, normals, uvs)
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            positions: Vec::with_capacity(capacity),
+            normals: Vec::with_capacity(capacity),
+            uvs: Vec::with_capacity(capacity),
+        }
+    }
+
+    #[inline]
+    pub fn positions(&self) -> &Vec<Vec3> {
+        &self.positions
+    }
+
+    #[inline]
+    pub fn normals(&self) -> &Vec<Vec3A> {
+        &self.normals
+    }
+
+    #[inline]
+    pub fn uvs(&self) -> &Vec<Vec2> {
+        &self.uvs
+    }
 }
 
-impl SlicedMesh {
-    pub fn new(
-        vertices: Vec<MeshBuilderVertex>,
-        indices: Vec<VertexId>,
-        index_map: Vec<VertexId>,
-    ) -> SlicedMesh {
-        SlicedMesh {
-            vertices,
-            indices,
-            index_map,
-            sliced_face_vertices: Vec::new(), // TODO Capacity ?
+#[derive(Clone)]
+pub struct Submesh {
+    indices: Vec<VertexId>,
+    cached_aabb: Option<Aabb>,
+}
+impl Submesh {
+    pub fn new() -> Self {
+        Self {
+            // TODO Capacity hint ?
+            indices: Vec::new(),
+            cached_aabb: None,
         }
     }
 
-    pub fn initialize_with(mesh: &SlicedMesh) -> SlicedMesh {
-        SlicedMesh::new(
-            Vec::new(), // TODO Capacity ?
-            Vec::new(), // TODO Capacity ?
-            // TODO Do we need a custom type to use as an option ?
-            // Index map is sparse
-            vec![0; mesh.vertices().len() + mesh.sliced_face_vertices().len()],
-        )
-    }
-
-    pub fn from_bevy_mesh(mesh: &bevy::render::mesh::Mesh) -> SlicedMesh {
-        let pos: Vec<Vec3A> = Self::vertices_from_mesh(mesh); // TODO Do we really need to copy it ?
-        let uv = Self::uv_from_mesh(mesh);
-        let normal = Self::normal_from_mesh(mesh);
-
-        let mut vertices = Vec::new();
-        for index in 0..pos.len() {
-            vertices.push(MeshBuilderVertex::new(pos[index], uv[index], normal[index]));
+    pub fn from_bevy_render_mesh(mesh: &RenderMesh) -> Self {
+        Self {
+            // TODO Handle errors
+            indices: indices_from_bevy_mesh(mesh),
+            cached_aabb: None,
         }
-
-        let index_map: Vec<VertexId> = vec![0; vertices.len()];
-        let indices: Vec<VertexId> = Self::triangles_from_mesh(mesh);
-
-        SlicedMesh::new(vertices, indices, index_map)
     }
 
-    pub fn vert(&self, vert_index: VertexId) -> &MeshBuilderVertex {
-        &self.vertices[vert_index as usize]
+    #[inline]
+    pub fn cached_aabb(&self) -> Option<Aabb> {
+        self.cached_aabb
     }
 
-    pub fn vertices(&self) -> &Vec<MeshBuilderVertex> {
-        &self.vertices
+    pub fn compute_aabb(&mut self, positions: &Vec<Vec3>) -> Aabb {
+        let aabb = Aabb::enclosing(self.indices.iter().map(|i| positions[*i as usize])).unwrap();
+        self.cached_aabb = Some(aabb);
+        aabb
     }
 
-    pub fn vertices_mut(&mut self) -> &mut Vec<MeshBuilderVertex> {
-        &mut self.vertices
-    }
-
-    pub fn sliced_face_vertices(&self) -> &Vec<MeshBuilderVertex> {
-        &self.sliced_face_vertices
-    }
-
-    // pub fn sliced_vertices_mut(&mut self, sliced_vertex: &mut MeshBuilderVertex, id: VertexId) {
-    //     *&mut self.sliced_vertices[id] = *sliced_vertex;
-    // }
-
-    pub fn sliced_face_vertices_mut(&mut self) -> &mut Vec<MeshBuilderVertex> {
-        &mut self.sliced_face_vertices
-    }
-
+    #[inline]
     pub fn indices(&self) -> &Vec<VertexId> {
         &self.indices
     }
 
-    pub fn index_map(&self) -> &Vec<VertexId> {
-        &self.index_map
+    #[inline]
+    pub fn indices_mut(&mut self) -> &mut Vec<VertexId> {
+        &mut self.indices
     }
 
-    pub fn add_sliced_vertex(&mut self, pos: Vec3A, uv: Vec2, normal: Vec3A) {
-        let vertex = MeshBuilderVertex::new(pos, uv, normal);
-        self.vertices.push(vertex);
-        self.sliced_face_vertices.push(vertex);
-    }
+    pub fn to_bevy_render_mesh(&self, sliced_mesh_data: &SlicedMeshData) -> RenderMesh {
+        // TODO Optimization: may share a global allocated LUT for all the fragments generated by multiple slice iterations. (Use an array of custom packed Option type) + generational index
+        let mut global_to_local_index_mapping = HashMap::<VertexId, u32>::new();
 
-    pub fn push_mapped_vertex(&mut self, vertex: MeshBuilderVertex, original_vertex_id: usize) {
-        self.vertices.push(vertex);
-        self.index_map[original_vertex_id] = self.vertices.len() as VertexId - 1;
-    }
-
-    pub fn push_mapped_triangle(&mut self, v1: VertexId, v2: VertexId, v3: VertexId) {
-        self.indices.push(self.index_map[v1 as usize]);
-        self.indices.push(self.index_map[v2 as usize]);
-        self.indices.push(self.index_map[v3 as usize]);
-    }
-
-    pub fn push_triangle(&mut self, v1: VertexId, v2: VertexId, v3: VertexId) {
-        self.indices.push(v1);
-        self.indices.push(v2);
-        self.indices.push(v3);
-    }
-
-    pub fn triangles_from_mesh(mesh: &bevy::render::mesh::Mesh) -> Vec<VertexId> {
-        let mut triangles: Vec<VertexId> = Vec::new();
-        let indices = mesh.indices().unwrap();
-
-        for index in 0..indices.len() {
-            triangles.push(indices.at(index) as VertexId);
+        // TODO Capacity is a bit overboard here for pos, uvs & normals
+        let mut positions = Vec::with_capacity(self.indices.len());
+        let mut uvs = Vec::with_capacity(self.indices.len());
+        let mut normals = Vec::with_capacity(self.indices.len());
+        let mut local_indices: Vec<u32> = Vec::with_capacity(self.indices.len());
+        for global_index in self.indices.iter() {
+            // TODO Some type safety for u32 indices
+            match global_to_local_index_mapping.get(global_index) {
+                None => {
+                    // Not present yet, insert all vertex data
+                    positions.push(sliced_mesh_data.pos(*global_index).to_array());
+                    uvs.push(sliced_mesh_data.uv(*global_index).to_array());
+                    normals.push(sliced_mesh_data.normal(*global_index).to_array());
+                    local_indices.push(positions.len() as u32 - 1);
+                    global_to_local_index_mapping.insert(*global_index, positions.len() as u32 - 1);
+                }
+                Some(local_index) => {
+                    // Already present, just insert a local index
+                    local_indices.push(*local_index);
+                }
+            };
         }
 
-        triangles
-    }
-
-    pub fn vertices_from_mesh(mesh: &bevy::render::mesh::Mesh) -> Vec<Vec3A> {
-        mesh.attribute(bevy::render::mesh::Mesh::ATTRIBUTE_POSITION)
-            .unwrap()
-            .as_float3()
-            .unwrap()
-            .iter()
-            .map(|v| Vec3A::from_array(*v))
-            .collect()
-    }
-
-    pub fn uv_from_mesh(mesh: &bevy::render::mesh::Mesh) -> Vec<Vec2> {
-        let uv = match mesh
-            .attribute(bevy::render::mesh::Mesh::ATTRIBUTE_UV_0)
-            .unwrap()
-        {
-            VertexAttributeValues::Float32x2(values) => Some(values),
-            _ => None,
-        }
-        .unwrap();
-        uv.clone().iter().map(|v| Vec2::from_array(*v)).collect()
-    }
-
-    pub fn normal_from_mesh(mesh: &bevy::render::mesh::Mesh) -> Vec<Vec3A> {
-        let normal = match mesh
-            .attribute(bevy::render::mesh::Mesh::ATTRIBUTE_NORMAL)
-            .unwrap()
-        {
-            VertexAttributeValues::Float32x3(values) => Some(values),
-            _ => None,
-        }
-        .unwrap();
-        normal
-            .clone()
-            .iter()
-            .map(|v| Vec3A::from_array(*v))
-            .collect()
-    }
-
-    // //todo: use ordered float
-    // pub fn shrink_sliced_vertices(&mut self) {
-    //     let mut shrink_vertices: Vec<MeshBuilderVertex> =
-    //         Vec::with_capacity(self.sliced_vertices.len());
-
-    //     let mut index_map = vec![0; self.sliced_vertices.len()];
-
-    //     let mut k = 0;
-
-    //     for i in 0..self.sliced_vertices.len() {
-    //         let mut duplicate = false;
-    //         for j in 0..shrink_vertices.len() {
-    //             if self.sliced_vertices[i].pos == shrink_vertices[j].pos {
-    //                 index_map[i] = j;
-    //                 duplicate = true;
-    //                 break;
-    //             }
-    //         }
-
-    //         if !duplicate {
-    //             shrink_vertices.push(self.sliced_vertices[i].clone());
-    //             index_map[i] = k;
-    //             k += 1;
-    //         }
-    //     }
-
-    //     for edge in self.constraints.iter_mut() {
-    //         edge.from = index_map[edge.from as usize] as VertexId;
-    //         edge.to = index_map[edge.to as usize] as VertexId;
-    //     }
-
-    //     shrink_vertices.shrink_to_fit();
-
-    //     self.sliced_vertices = shrink_vertices;
-    // }
-
-    pub fn to_bevy_mesh(&self) -> bevy::render::mesh::Mesh {
-        let fragment_mesh = bevy::render::mesh::Mesh::new(
+        let mesh = RenderMesh::new(
             PrimitiveTopology::TriangleList,
             RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
         )
-        .with_inserted_attribute(
-            bevy::render::mesh::Mesh::ATTRIBUTE_POSITION,
-            SlicedMesh::into_bevy_vertices(&self.vertices(), &self.sliced_face_vertices()),
-        )
-        .with_inserted_attribute(
-            bevy::render::mesh::Mesh::ATTRIBUTE_UV_0,
-            SlicedMesh::into_bevy_uvs(&self.vertices(), &self.sliced_face_vertices()),
-        )
-        .with_inserted_attribute(
-            bevy::render::mesh::Mesh::ATTRIBUTE_NORMAL,
-            SlicedMesh::into_bevy_normal(&self.vertices(), &self.sliced_face_vertices()),
-        )
-        .with_inserted_indices(Indices::U32(SlicedMesh::into_bevy_indices(&self.indices())));
-        fragment_mesh
+        .with_inserted_attribute(RenderMesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(RenderMesh::ATTRIBUTE_UV_0, uvs)
+        .with_inserted_attribute(RenderMesh::ATTRIBUTE_NORMAL, normals)
+        // TODO May sometimes use U16 ?
+        .with_inserted_indices(Indices::U32(local_indices));
+        mesh
     }
+}
 
-    pub fn into_bevy_vertices(
-        vertex_buffer: &Vec<MeshBuilderVertex>,
-        sliced_vertices: &Vec<MeshBuilderVertex>,
-    ) -> Vec<[f32; 3]> {
-        let mut vertices_uncut = Vec::new();
-        for vertex in 0..vertex_buffer.len() {
-            vertices_uncut.push(vertex_buffer[vertex].pos);
-        }
+pub fn vertices_from_bevy_mesh(mesh: &bevy::render::mesh::Mesh) -> Vec<Vec3> {
+    // TODO Handle unwraps
+    mesh.attribute(bevy::render::mesh::Mesh::ATTRIBUTE_POSITION)
+        .unwrap()
+        .as_float3()
+        .unwrap()
+        .iter()
+        .map(|v| Vec3::from_array(*v))
+        .collect()
+}
 
-        let mut vertices_cut = Vec::new();
-        for vertex in 0..sliced_vertices.len() {
-            vertices_cut.push(sliced_vertices[vertex].pos);
-        }
-        vertices_uncut.append(&mut vertices_cut);
-
-        vertices_uncut.iter().map(|v| v.to_array()).collect()
+pub fn uv_from_bevy_mesh(mesh: &bevy::render::mesh::Mesh) -> Vec<Vec2> {
+    // TODO Handle unwrap
+    let uv = match mesh
+        .attribute(bevy::render::mesh::Mesh::ATTRIBUTE_UV_0)
+        .unwrap()
+    {
+        VertexAttributeValues::Float32x2(values) => Some(values),
+        _ => None,
     }
+    .unwrap();
+    uv.iter().map(|v| Vec2::from_array(*v)).collect()
+}
 
-    pub fn into_bevy_indices(index_buffer: &Vec<VertexId>) -> Vec<u32> {
-        index_buffer.iter().map(|i| *i as u32).collect()
+pub fn normal_from_bevy_mesh(mesh: &bevy::render::mesh::Mesh) -> Vec<Vec3A> {
+    // TODO Handle unwrap
+    let normal = match mesh
+        .attribute(bevy::render::mesh::Mesh::ATTRIBUTE_NORMAL)
+        .unwrap()
+    {
+        VertexAttributeValues::Float32x3(values) => Some(values),
+        _ => None,
     }
+    .unwrap();
+    normal.iter().map(|v| Vec3A::from_array(*v)).collect()
+}
 
-    pub fn into_bevy_uvs(
-        vertex_buffer: &Vec<MeshBuilderVertex>,
-        sliced_vertices: &Vec<MeshBuilderVertex>,
-    ) -> Vec<[f32; 2]> {
-        let mut vertices_uncut = Vec::new();
-        for vertex in 0..vertex_buffer.len() {
-            vertices_uncut.push(vertex_buffer[vertex].uv);
-        }
-
-        let mut vertices_cut = Vec::new();
-        for vertex in 0..sliced_vertices.len() {
-            vertices_cut.push(sliced_vertices[vertex].uv);
-        }
-        vertices_uncut.append(&mut vertices_cut);
-
-        vertices_uncut.iter().map(|v| v.to_array()).collect()
-    }
-
-    pub fn into_bevy_normal(
-        vertex_buffer: &Vec<MeshBuilderVertex>,
-        sliced_vertices: &Vec<MeshBuilderVertex>,
-    ) -> Vec<[f32; 3]> {
-        let mut vertices_uncut = Vec::new();
-        for vertex in 0..vertex_buffer.len() {
-            vertices_uncut.push(vertex_buffer[vertex].normal);
-        }
-
-        let mut vertices_cut = Vec::new();
-        for vertex in 0..sliced_vertices.len() {
-            vertices_cut.push(sliced_vertices[vertex].normal);
-        }
-
-        vertices_uncut.append(&mut vertices_cut);
-
-        vertices_uncut.iter().map(|v| v.to_array()).collect()
-    }
-
-    pub fn index(&self) -> &Vec<VertexId> {
-        &self.indices
-    }
+pub fn indices_from_bevy_mesh(mesh: &bevy::render::mesh::Mesh) -> Vec<VertexId> {
+    // TODO Handle unwrap
+    let indices = mesh.indices().unwrap();
+    indices.iter().map(|i| i as VertexId).collect()
 }
