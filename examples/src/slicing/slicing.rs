@@ -43,6 +43,7 @@ fn main() {
         .add_event::<SpawnSliceableEvent>()
         .add_event::<SliceEvent>()
         .add_event::<FragmenterEvent>()
+        .add_event::<DeterministicSliceEvent>()
         .add_plugins((ExamplesPlugin, BillboardPlugin))
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugins(DefaultRaycastingPlugin)
@@ -55,7 +56,7 @@ fn main() {
                 key_mapping,
                 spawn_sliceable_object,
                 spawn_fragmented_object,
-                // spawn_slice,
+                deterministic_slice_object, // spawn_slice,
             )
                 .chain(),
         )
@@ -67,6 +68,9 @@ struct SliceMesh;
 
 #[derive(Event)]
 struct SpawnSliceableEvent;
+
+#[derive(Event)]
+struct DeterministicSliceEvent;
 
 #[derive(Event)]
 struct FragmenterEvent;
@@ -215,12 +219,16 @@ fn key_mapping(
     mut commands: Commands,
     key: Res<ButtonInput<KeyCode>>,
     mut spawn_sliceable_events: EventWriter<SpawnSliceableEvent>,
+    mut deterministic_slice_events: EventWriter<DeterministicSliceEvent>,
     mut spawn_fragmenter_events: EventWriter<FragmenterEvent>,
     query_despawn1: Query<Entity, With<Sliced>>,
     query_despawn2: Query<Entity, With<SliceableObject>>,
 ) {
     if key.just_pressed(KeyCode::KeyN) {
         spawn_sliceable_events.send(SpawnSliceableEvent);
+    }
+    if key.just_pressed(KeyCode::KeyT) {
+        deterministic_slice_events.send(DeterministicSliceEvent);
     } else if key.just_pressed(KeyCode::Enter) {
         for entity in query_despawn1.iter() {
             commands.entity(entity).despawn();
@@ -278,6 +286,44 @@ fn spawn_sliceable_object(
             },
             SliceableObject,
         ));
+    }
+}
+
+fn deterministic_slice_object(
+    mut commands: Commands,
+    mut events: EventReader<DeterministicSliceEvent>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut meshes_assets: ResMut<Assets<Mesh>>,
+    q_sliceables: Query<
+        (Entity, &Transform, &GlobalTransform, &Handle<Mesh>),
+        (With<SliceableObject>),
+    >,
+) {
+    if !events.is_empty() {
+        events.clear();
+
+        for (entity, transform, gtrsfrm, mesh_handle) in q_sliceables.iter() {
+            let mesh = meshes_assets.get(mesh_handle).unwrap();
+            let slice_center = Vec3A::from(transform.translation);
+
+            let aabb = mesh.compute_aabb().unwrap();
+
+            let plane = Plane::new(aabb.center, Vec3::Y.into()).into();
+            info!("Deterministic cut plane is {:?}", plane);
+
+            commands.entity(entity).despawn_recursive();
+
+            let meshes = slice_bevy_mesh(plane, &mesh);
+
+            info!("Created {} meshes ", meshes.len());
+            spawn_fragment(
+                meshes,
+                &mut materials,
+                &mut meshes_assets,
+                &mut commands,
+                slice_center,
+            );
+        }
     }
 }
 

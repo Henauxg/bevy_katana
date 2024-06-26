@@ -445,7 +445,6 @@ impl Submesh {
                     global_to_local_index_mapping.insert(*global_index, positions.len() as u32 - 1);
                 }
                 Some(local_index) => {
-                    // Already present, just insert a local index
                     local_indices.push(*local_index);
                 }
             };
