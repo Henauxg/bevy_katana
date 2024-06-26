@@ -4,6 +4,7 @@ use bevy::{
     math::{Vec3, Vec3A},
     utils::HashMap,
 };
+use ghx_constrained_delaunay::constrained_triangulation::constrained_triangulation_from_3d_planar_vertices;
 use ghx_constrained_delaunay::types::Vertex;
 use glam::Vec2;
 
@@ -141,26 +142,6 @@ fn internal_slice_submesh(
     }
 }
 
-/// Transforms 3d coordinates of all vertices into 2d coordinates on a plane defined by the given normal and vertices.
-/// - Input vertices need to all belong to the same 3d plan
-/// - There must be at least two vertices
-pub fn custom_transform_to_2d_planar_coordinate_system(
-    vertices: &Vec<Vec3>,
-    plane_normal: Vec3A,
-) -> Vec<Vertex> {
-    // Create a base, using the first two vertices as the first base vector and plane_normal as the second
-    let basis_1 = (vertices[0] - vertices[1]).normalize();
-    // basis_3 is already normalized since basis_1 and plane_normal are normalized and orthogonal
-    let basis_3 = basis_1.cross(plane_normal.into());
-
-    // Project every vertices into the base B
-    let mut vertices_2d = Vec::with_capacity(vertices.len());
-    for vertex in vertices {
-        vertices_2d.push(Vertex::new(vertex.dot(basis_1), vertex.dot(basis_3)));
-    }
-    vertices_2d
-}
-
 fn triangulate_and_fill_sliced_faces(
     plane: &Plane,
     top_fragment: &mut Submesh,
@@ -168,6 +149,12 @@ fn triangulate_and_fill_sliced_faces(
     sliced_contour: &Vec<Edge>,
     sliced_mesh_data: &mut SlicedMeshData,
 ) {
+    // TODO Add notes somewhere
+    // - In slicing, edges all share the same orientation: CW looking in the direction of the plane normal
+    // - During planar transformation, winding order order in preserved
+    // - In triangulation data, planar triangles are all CW
+    // - In triangulation, only triangles within a constraint domain are kept: triangles (and their respective domain) having a constrained edge as an edge. So for a domain to be kept, its edges should be oriented CW in the triangulation data
+
     // TODO Could we build a local edges contour while slicing ?
     let mut local_edges = Vec::with_capacity(sliced_contour.len());
     let mut local_vertices = Vec::with_capacity(sliced_contour.len());
@@ -193,21 +180,19 @@ fn triangulate_and_fill_sliced_faces(
                 local_vert_id
             }
         };
-        local_edges.push(Edge::new(local_to, local_from)); // TODO FIX: inverted
+        local_edges.push(Edge::new(local_from, local_to));
     }
-    // TODO Use triangulaiton bundled trransfomr function but choose a vertex format (vec3a or vec3)
-    let planar_vertices =
-        custom_transform_to_2d_planar_coordinate_system(&local_vertices, plane.normal());
 
-    let triangulation = ghx_constrained_delaunay::constrained_triangulation_from_2d_vertices(
-        &planar_vertices,
+    let triangulation = constrained_triangulation_from_3d_planar_vertices(
+        &local_vertices,
+        plane.normal(),
         &local_edges,
         ConstrainedTriangulationConfiguration::default(),
     );
 
     // TODO Optimization: share allocation
     let mut planar_vert_id_to_frag_global_verts_ids: Vec<Option<(VertexId, VertexId)>> =
-        vec![None; planar_vertices.len()];
+        vec![None; local_vertices.len()];
     let mut top_triangle = [0, 0, 0];
     let mut bottom_triangle = [0, 0, 0];
 
@@ -228,9 +213,9 @@ fn triangulate_and_fill_sliced_faces(
                     }
                 };
 
-            top_triangle[2 - v_index] = top_vert_id;
+            top_triangle[v_index] = top_vert_id;
             // We need to change the orientation of the triangles for one of the sliced faces
-            bottom_triangle[v_index] = bottom_vert_id;
+            bottom_triangle[2 - v_index] = bottom_vert_id;
         }
 
         top_fragment.indices_mut().extend(top_triangle);
