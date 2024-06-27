@@ -1,12 +1,9 @@
 use bevy::render::mesh::Mesh as RenderMesh;
-use bevy::{
-    log::warn,
-    math::{Vec3, Vec3A},
-    utils::HashMap,
-};
+use bevy::{log::warn, utils::HashMap};
 use ghx_constrained_delaunay::constrained_triangulation::constrained_triangulation_from_3d_planar_vertices;
-use ghx_constrained_delaunay::types::Vertex;
-use glam::Vec2;
+use ghx_constrained_delaunay::triangulation::TriangulationConfiguration;
+use ghx_constrained_delaunay::triangulation_from_3d_planar_vertices;
+use glam::{Vec2, Vec3A};
 
 use crate::types::{SlicedMeshData, Submesh};
 use crate::{
@@ -33,7 +30,11 @@ pub fn slice_bevy_mesh(plane: Plane, mesh: &RenderMesh) -> Vec<RenderMesh> {
         .collect()
 }
 
-pub fn slice_bevy_mesh_iterative(mesh: &RenderMesh, iteration_count: u32) -> Vec<RenderMesh> {
+pub fn slice_bevy_mesh_iterative(
+    mesh: &RenderMesh,
+    iteration_count: u32,
+    plane_normal: Option<Vec3A>,
+) -> Vec<RenderMesh> {
     if iteration_count == 0 {
         return vec![mesh.clone()];
     }
@@ -54,6 +55,7 @@ pub fn slice_bevy_mesh_iterative(mesh: &RenderMesh, iteration_count: u32) -> Vec
             &mut submeshes_to_slice,
             sliced_submeshes,
             &mut sliced_mesh_data,
+            plane_normal,
         );
 
         // Swap buffer
@@ -80,6 +82,7 @@ fn internal_slice_submeshes(
     submeshes_to_slice: &mut Vec<Submesh>,
     sliced_submeshes: &mut Vec<Submesh>,
     sliced_mesh_data: &mut SlicedMeshData,
+    plane_normal: Option<Vec3A>,
 ) {
     while let Some(mut mesh_to_slice) = submeshes_to_slice.pop() {
         // Use aabb for mesh center approximation
@@ -87,9 +90,15 @@ fn internal_slice_submeshes(
             Some(aabb) => aabb,
             None => mesh_to_slice.compute_aabb(sliced_mesh_data.buffers().positions()),
         };
-        // Random normalized vector for the cut plane
-        let normal_vec = get_random_normalized_vec();
-        let plane = Plane::new(aabb.center, normal_vec);
+
+        let plane = match plane_normal {
+            Some(normal) => Plane::new(aabb.center, normal),
+            None => {
+                // Random normalized vector for the cut plane
+                let normal_vec = get_random_normalized_vec();
+                Plane::new(aabb.center, normal_vec)
+            }
+        };
 
         if let Some(fragments) = internal_slice_submesh(&mut mesh_to_slice, plane, sliced_mesh_data)
         {

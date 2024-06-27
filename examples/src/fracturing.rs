@@ -1,14 +1,21 @@
 use std::collections::HashMap;
 
 use bevy::{
-    app::{App, Startup},
+    app::{App, PluginGroup, Startup},
     asset::Assets,
-    math::Vec3,
-    pbr::{PbrBundle, StandardMaterial},
-    prelude::{default, Commands, Cuboid, Entity, ResMut},
+    hierarchy::BuildChildren,
+    log::info,
+    math::{Vec3, Vec3A},
+    pbr::{
+        wireframe::{Wireframe, WireframeColor, WireframeConfig, WireframePlugin},
+        PbrBundle, StandardMaterial,
+    },
+    prelude::{default, Commands, Cuboid, Entity, ResMut, SpatialBundle},
     render::{
         color::Color,
         mesh::{Mesh, Meshable},
+        settings::{RenderCreation, WgpuFeatures, WgpuSettings},
+        RenderPlugin,
     },
     transform::components::Transform,
     DefaultPlugins,
@@ -29,15 +36,33 @@ use bevy_rapier3d::{
     },
     plugin::{NoUserData, RapierPhysicsPlugin},
     rapier::geometry::BoundingVolume,
+    render::RapierDebugRenderPlugin,
 };
 use examples::plugin::ExamplesPlugin;
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins((
+            DefaultPlugins,
+            // DefaultPlugins.set(RenderPlugin {
+            //     render_creation: RenderCreation::Automatic(WgpuSettings {
+            //         features: WgpuFeatures::POLYGON_MODE_LINE,
+            //         ..default()
+            //     }),
+            //     ..default()
+            // }),
+            WireframePlugin,
+        ))
+        .add_plugins((
+            RapierPhysicsPlugin::<NoUserData>::default(),
+            RapierDebugRenderPlugin::default(),
+        ))
         .add_plugins(ExamplesPlugin)
-        .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugins(DefaultRaycastingPlugin)
+        .insert_resource(WireframeConfig {
+            global: false,
+            default_color: Color::WHITE,
+        })
         .add_systems(Startup, setup)
         .run();
 }
@@ -48,120 +73,126 @@ fn setup(
     meshes_assets: ResMut<Assets<Mesh>>,
 ) {
     let mesh = Cuboid::new(1., 1., 1.).mesh();
-    // let mesh_aabb = Cuboid::new(1., 1., 1.).mesh().compute_aabb().unwrap();
+    let meshes = slice_bevy_mesh_iterative(&mesh, 1, Some(Vec3A::X));
 
-    // TODO Do not compute trimeshes. We just need aabbs
-    // let trimesh = create_parry_trimesh(&Mesh::from_bevy_mesh(&mesh));
+    let mut colliders: Vec<Collider> = Vec::with_capacity(meshes.len());
+    for mesh in meshes.iter() {
+        // It's a bevy Mesh we generated, we know that it is in a compatible format
+        let mut collider =
+            Collider::from_bevy_mesh(&mesh, &ComputedColliderShape::ConvexHull).unwrap();
+        // collider.set_scale(1.05 * Vec3::ONE, 2);
+        colliders.push(collider);
+    }
 
-    // let meshes = slice_bevy_mesh_iterative(&mesh, 1);
+    let mut all_joints = HashMap::new();
+    for (i, collider_1) in colliders.iter().enumerate() {
+        let mut joints = Vec::new();
+        let attach_point_1 = collider_1.raw.0.compute_local_aabb().center();
+        for (j, collider_2) in colliders[i + 1..colliders.len()].iter().enumerate() {
+            if check_collision(
+                collider_1.into(),
+                &&Isometry3::identity(),
+                collider_2.into(),
+                &Isometry3::identity(),
+            ) {
+                info!("Collision between frag {} and {}", i, j + i + 1);
+                let attach_point_2 = collider_2.raw.0.compute_local_aabb().center();
+                joints.push((j, (attach_point_2 - attach_point_1).into()));
+            } else {
+                info!("No collision between frag {} and {}", i, j + i + 1);
+            }
+        }
+        if !joints.is_empty() {
+            // TODO Do better than this
 
-    // // TODO Less back & forth between != mesh formats
-    // let chunks = create_chunks(&meshes);
+            all_joints.insert(i, joints);
+        }
+    }
 
-    // let (translations, joints) =
-    //     create_joints(&chunks, &trimesh.compute_aabb(&Isometry3::identity()));
+    for collider in colliders.iter_mut() {
+        // collider.set_scale(0.5 * Vec3::ONE, 2);
+        // collider.promote_scaled_shape();
+    }
 
-    // spawn_entities(
-    //     commands,
-    //     materials,
-    //     meshes_assets,
-    //     &chunks,
-    //     &translations,
-    //     &joints,
-    // );
+    spawn_fragments_entities(
+        commands,
+        materials,
+        meshes_assets,
+        &meshes,
+        &colliders,
+        &all_joints, // &joints,
+    );
 }
 
-fn spawn_entities(
+fn spawn_fragments_entities(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes_assets: ResMut<Assets<Mesh>>,
-    chunks: &Vec<Mesh>,
-    translations: &Vec<Translation3<f32>>,
-    joints: &HashMap<usize, Vec<usize>>,
+    frag_meshes: &Vec<Mesh>,
+    frag_colliders: &Vec<Collider>,
+    all_joints: &HashMap<usize, Vec<(usize, Vec3)>>, // translations: &Vec<Translation3<f32>>,
+                                                     // joints: &HashMap<usize, Vec<usize>>,
 ) {
-    // let mut entity_map = HashMap::new();
+    let mut entity_map = Vec::new();
 
-    // for (i, chunk) in chunks.iter().enumerate() {
-    //     let mesh = chunk.to_bevy_mesh();
-    //     let entity = create_entity(
-    //         &mut materials,
-    //         &mut meshes_assets,
-    //         &mut commands,
-    //         &mesh,
-    //         translations[i],
-    //     );
+    for (index, (mesh, collider)) in frag_meshes.iter().zip(frag_colliders.iter()).enumerate() {
+        let pos = Vec3::new(0. * index as f32, 3., 0.);
+        info!("Spawning frag at pos {:?}, index {}", pos, index);
+        let entity = create_fragment_entity(
+            &mut materials,
+            &mut meshes_assets,
+            &mut commands,
+            mesh,
+            collider,
+            pos,
+        );
+        entity_map.push(entity);
+    }
 
-    //     entity_map.insert(i, entity);
-    // }
-
-    // for (i, joint_indices) in joints.iter() {
-    //     if let Some(&parent_entity) = entity_map.get(i) {
-    //         for &j in joint_indices.iter() {
-    //             if let Some(&child_entity) = entity_map.get(&j) {
-    //                 let joint = FixedJointBuilder::new().local_anchor1(Vec3::new(0.0, 0.0, 0.0));
-
-    //                 commands
-    //                     .entity(child_entity)
-    //                     .insert(ImpulseJoint::new(parent_entity, joint));
-    //             }
-    //         }
-    //     }
-    // }
+    for (&from, to_fragments) in all_joints.iter() {
+        let from_entity = entity_map[from];
+        for (to, anchor) in to_fragments.iter() {
+            let to_entity = entity_map[*to];
+            // TODO attach point
+            // let anchor = Vec3::new(-1., 0., 0.); // TODO Tmp Override
+            let joint = FixedJointBuilder::new()
+                .local_anchor1(*anchor)
+                .local_anchor2(*anchor);
+            info!("Spawning joint with anchor: {:?} ", anchor);
+            let child_entity = commands
+                .spawn((
+                    // SpatialBundle::default(),
+                    ImpulseJoint::new(to_entity, joint),
+                ))
+                .id();
+            commands.entity(from_entity).add_child(child_entity);
+        }
+    }
 }
 
-// fn create_joints(
-//     chunks: &Vec<Mesh>,
-//     aabb: &Aabb,
-// ) -> (Vec<Translation3<f32>>, HashMap<usize, Vec<usize>>) {
-//     let mut joints = HashMap::new();
-//     let mut translations = vec![Translation::new(0.0, 0.0, 0.0); chunks.len()];
-
-//     for (i, chunk1) in chunks.iter().enumerate() {
-//         let mut joint = Vec::new();
-
-//         let trimesh1 = create_parry_trimesh(chunk1);
-//         let translation1 = calculate_translation(aabb, &trimesh1);
-//         let isometry1 = create_isometry(translation1.x, translation1.y, translation1.z, 0.);
-
-//         translations[i] = translation1;
-
-//         for (j, chunk2) in chunks.iter().enumerate() {
-//             if i == j {
-//                 continue;
-//             }
-
-//             let trimesh2 = create_parry_trimesh(chunk2);
-//             let translation2 = calculate_translation(aabb, &trimesh2);
-//             let isometry2 = create_isometry(translation2.x, translation2.y, translation2.z, 0.);
-
-//             if check_collision(&trimesh1, &isometry1, &trimesh2, &isometry2) {
-//                 joint.push(j);
-//             }
-//         }
-//         joints.insert(i, joint);
-//     }
-
-//     (translations, joints)
-// }
-
-fn create_entity(
+fn create_fragment_entity(
     materials: &mut ResMut<Assets<StandardMaterial>>,
     meshes_assets: &mut ResMut<Assets<Mesh>>,
     commands: &mut Commands,
     mesh: &Mesh,
-    pos: Translation<f32>,
+    collider: &Collider,
+    pos: Vec3,
 ) -> Entity {
     let mesh_handle = meshes_assets.add(mesh.clone());
     commands
         .spawn((
             PbrBundle {
                 mesh: mesh_handle.clone(),
-                transform: Transform::from_xyz(pos.x, pos.y, pos.z),
+                transform: Transform::from_translation(pos),
                 material: materials.add(Color::rgb_u8(124, 144, 255)),
                 ..default()
             },
-            RigidBody::Fixed,
-            Collider::from_bevy_mesh(&mesh, &ComputedColliderShape::ConvexHull).unwrap(),
+            // Wireframe,
+            // WireframeColor {
+            //     color: Color::GREEN,
+            // },
+            RigidBody::Dynamic,
+            collider.clone(),
             ActiveCollisionTypes::default(),
             Friction::coefficient(0.7),
             Restitution::coefficient(0.05),
@@ -169,53 +200,6 @@ fn create_entity(
         ))
         .id()
 }
-
-fn calculate_translation(main_aabb: &Aabb, sub_mesh: &TriMesh) -> Translation3<f32> {
-    let main_center = main_aabb.center();
-
-    let sub_aabb = sub_mesh.compute_aabb(&Isometry3::identity());
-    let sub_center = sub_aabb.center();
-
-    let translation_vector = sub_center - main_center;
-
-    Translation3::from(translation_vector)
-}
-
-fn create_isometry(tx: f32, ty: f32, tz: f32, angle: f32) -> Isometry3<f32> {
-    let translation = Translation3::new(tx, ty, tz);
-    let rotation = UnitQuaternion::from_euler_angles(0.0, 0.0, angle);
-    Isometry3::from_parts(translation, rotation)
-}
-
-// fn create_parry_trimesh(chunk: &Mesh) -> TriMesh {
-//     let vertices = chunk.vertices();
-//     let mut parry_vertices = Vec::new();
-//     for vertex in vertices {
-//         let pos = vertex.pos();
-//         parry_vertices.push(Point::new(pos.x, pos.y, pos.z));
-//     }
-
-//     let triangles = chunk.indices();
-//     let mut parry_indices = Vec::new();
-//     for triangle_id in (0..triangles.len()).step_by(3) {
-//         parry_indices.push([
-//             triangles[triangle_id] as u32,
-//             triangles[triangle_id + 1] as u32,
-//             triangles[triangle_id + 2] as u32,
-//         ]);
-//     }
-
-//     TriMesh::new(parry_vertices, parry_indices)
-// }
-
-// fn create_chunks(meshes: &Vec<Mesh>) -> Vec<Mesh> {
-//     let mut chunks = Vec::new();
-//     for mesh in meshes {
-//         chunks.push(Mesh::from_bevy_mesh(mesh));
-//     }
-
-//     chunks
-// }
 
 fn check_collision(
     shape1: &dyn Shape,

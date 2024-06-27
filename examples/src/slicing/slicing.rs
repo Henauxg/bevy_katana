@@ -1,11 +1,29 @@
 use bevy::{
-    math::Vec3A,
-    pbr::wireframe::{Wireframe, WireframeColor, WireframeConfig, WireframePlugin},
-    prelude::*,
+    app::PluginGroup,
+    app::{App, Startup, Update},
+    asset::{Assets, Handle},
+    hierarchy::DespawnRecursiveExt,
+    input::ButtonInput,
+    log::info,
+    math::{Vec3, Vec3A},
+    pbr::{
+        wireframe::{Wireframe, WireframeColor, WireframeConfig, WireframePlugin},
+        PbrBundle, StandardMaterial,
+    },
+    prelude::{
+        Commands, Component, Cuboid, Entity, Event, EventReader, EventWriter, Gizmos,
+        IntoSystemConfigs, KeyCode, MouseButton, Query, Res, ResMut, Resource, With, Without,
+    },
     render::{
+        camera::Camera,
+        color::Color,
+        mesh::{Mesh, Meshable},
         settings::{RenderCreation, WgpuFeatures, WgpuSettings},
         RenderPlugin,
     },
+    transform::components::{GlobalTransform, Transform},
+    utils::default,
+    DefaultPlugins,
 };
 
 use bevy_ghx_destruction::{
@@ -252,7 +270,7 @@ fn spawn_fragmented_object(
 
         let mesh = Cuboid::new(1., 1., 1.).mesh();
 
-        let fragments = slice_bevy_mesh_iterative(&mesh, 2);
+        let fragments = slice_bevy_mesh_iterative(&mesh, 2, None);
         spawn_fragment(
             fragments.into(),
             &mut materials,
