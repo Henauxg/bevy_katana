@@ -1,13 +1,17 @@
 use std::collections::HashMap;
 
 use bevy::{
-    app::{App, Startup},
-    asset::Assets,
-    hierarchy::BuildChildren,
+    app::{App, Startup, Update},
+    asset::{AssetServer, Assets},
+    hierarchy::{BuildChildren, DespawnRecursiveExt},
+    input::ButtonInput,
     log::info,
     math::{Vec3, Vec3A},
     pbr::{wireframe::WireframePlugin, PbrBundle, StandardMaterial},
-    prelude::{default, Commands, Cuboid, Entity, ResMut},
+    prelude::{
+        default, Commands, Component, Cuboid, Entity, EventReader, IntoSystemConfigs, KeyCode,
+        Query, Res, ResMut, With,
+    },
     render::{
         color::Color,
         mesh::{Mesh, Meshable},
@@ -25,11 +29,18 @@ use bevy_rapier3d::{
     },
     na::Isometry3,
     parry::{math::Isometry, shape::Shape},
+    pipeline::{CollisionEvent, ContactForceEvent},
     plugin::{NoUserData, RapierPhysicsPlugin},
     rapier::geometry::BoundingVolume,
     render::RapierDebugRenderPlugin,
 };
-use examples::plugin::ExamplesPlugin;
+use examples::{ball::BallSensor, plugin::ExamplesPlugin};
+
+#[derive(Component)]
+struct ExamleMesh;
+
+#[derive(Component)]
+struct FragmentedMesh;
 
 fn main() {
     App::new()
@@ -41,6 +52,7 @@ fn main() {
         .add_plugins(ExamplesPlugin)
         .add_plugins(DefaultRaycastingPlugin)
         .add_systems(Startup, setup)
+        .add_systems(Update, (respawn_mesh, handle_collisions).chain())
         .run();
 }
 
@@ -49,8 +61,41 @@ fn setup(
     materials: ResMut<Assets<StandardMaterial>>,
     meshes_assets: ResMut<Assets<Mesh>>,
 ) {
+    spawn_frac_mesh(commands, materials, meshes_assets);
+}
+
+fn spawn_mesh(
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    meshes_assets: &mut ResMut<Assets<Mesh>>,
+    commands: &mut Commands,
+    mesh: &Mesh,
+    pos: Vec3,
+) {
+    let mesh_handle = meshes_assets.add(mesh.clone());
+    commands.spawn((
+        PbrBundle {
+            mesh: mesh_handle.clone(),
+            transform: Transform::from_xyz(pos.x, pos.y, pos.z),
+            material: materials.add(Color::rgb_u8(124, 144, 255)),
+            ..default()
+        },
+        ExamleMesh,
+        RigidBody::Dynamic,
+        Collider::from_bevy_mesh(&mesh, &ComputedColliderShape::ConvexHull).unwrap(),
+        ActiveCollisionTypes::default(),
+        Friction::coefficient(0.7),
+        Restitution::coefficient(0.05),
+        ColliderMassProperties::Density(2.0),
+    ));
+}
+
+fn spawn_frac_mesh(
+    commands: Commands,
+    materials: ResMut<Assets<StandardMaterial>>,
+    meshes_assets: ResMut<Assets<Mesh>>,
+) {
     let mesh = Cuboid::new(1., 1., 1.).mesh();
-    let meshes = slice_bevy_mesh_iterative(&mesh, 2, Some(Vec3A::X));
+    let meshes = slice_bevy_mesh_iterative(&mesh, 3, None);
 
     let mut colliders: Vec<Collider> = Vec::with_capacity(meshes.len());
     for mesh in meshes.iter() {
@@ -89,6 +134,35 @@ fn setup(
     );
 }
 
+fn respawn_mesh(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    query_cubes: Query<Entity, With<ExamleMesh>>,
+    mut commands: Commands,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut meshes_assets: ResMut<Assets<Mesh>>,
+) {
+    if keyboard_input.pressed(KeyCode::KeyF) {
+        for entity in query_cubes.iter() {
+            commands.entity(entity).despawn_recursive();
+        }
+        let mesh = Cuboid::new(1., 1., 1.).mesh();
+        let pos = Vec3::new(0., 0., 0.);
+        spawn_mesh(
+            &mut materials,
+            &mut meshes_assets,
+            &mut commands,
+            &mesh,
+            pos,
+        );
+    }
+    if keyboard_input.pressed(KeyCode::KeyG) {
+        for entity in query_cubes.iter() {
+            commands.entity(entity).despawn_recursive();
+        }
+        spawn_frac_mesh(commands, materials, meshes_assets);
+    }
+}
+
 fn spawn_fragments_entities(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -114,6 +188,7 @@ fn spawn_fragments_entities(
 
     for (&from, to_fragments) in all_joints.iter() {
         let parent_entity = entity_map[from];
+        info!("from {:?}, to_fragments{:?}", from, to_fragments);
         for (to, anchor) in to_fragments.iter() {
             let child = entity_map[*to];
             let joint = FixedJointBuilder::new()
@@ -121,6 +196,7 @@ fn spawn_fragments_entities(
                 .local_anchor2(*anchor);
             let child_entity = commands.spawn((ImpulseJoint::new(child, joint),)).id();
             commands.entity(parent_entity).add_child(child_entity);
+            // .insert(ImpulseJoint::new(child, joint));
         }
     }
 }
@@ -142,6 +218,8 @@ fn create_fragment_entity(
                 material: materials.add(Color::rgb_u8(124, 144, 255)),
                 ..default()
             },
+            ExamleMesh,
+            FragmentedMesh,
             RigidBody::Dynamic,
             collider.clone(),
             ActiveCollisionTypes::default(),
@@ -162,4 +240,23 @@ fn check_collision(
     let aabb2 = shape2.compute_aabb(pos2);
 
     aabb1.intersects(&aabb2)
+}
+
+fn handle_collisions(
+    mut commands: Commands,
+    mut contact_force_events: EventReader<ContactForceEvent>,
+    fragments: Query<&FragmentedMesh>,
+) {
+    for contact_force_event in contact_force_events.read() {
+        let fragment = if let Ok(_) = fragments.get(contact_force_event.collider1) {
+            Some(contact_force_event.collider1)
+        } else if let Ok(_) = fragments.get(contact_force_event.collider2) {
+            Some(contact_force_event.collider2)
+        } else {
+            None
+        };
+        if let Some(fragment_entity) = fragment {
+            commands.entity(fragment_entity).despawn_descendants();
+        }
+    }
 }
