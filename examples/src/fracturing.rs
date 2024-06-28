@@ -1,21 +1,16 @@
 use std::collections::HashMap;
 
 use bevy::{
-    app::{App, PluginGroup, Startup},
+    app::{App, Startup},
     asset::Assets,
     hierarchy::BuildChildren,
     log::info,
     math::{Vec3, Vec3A},
-    pbr::{
-        wireframe::{Wireframe, WireframeColor, WireframeConfig, WireframePlugin},
-        PbrBundle, StandardMaterial,
-    },
-    prelude::{default, Commands, Cuboid, Entity, ResMut, SpatialBundle},
+    pbr::{wireframe::WireframePlugin, PbrBundle, StandardMaterial},
+    prelude::{default, Commands, Cuboid, Entity, ResMut},
     render::{
         color::Color,
         mesh::{Mesh, Meshable},
-        settings::{RenderCreation, WgpuFeatures, WgpuSettings},
-        RenderPlugin,
     },
     transform::components::Transform,
     DefaultPlugins,
@@ -28,12 +23,8 @@ use bevy_rapier3d::{
         ActiveCollisionTypes, Collider, ColliderMassProperties, ComputedColliderShape, Friction,
         Restitution,
     },
-    na::{Isometry3, Translation3, UnitQuaternion},
-    parry::{
-        bounding_volume::Aabb,
-        math::{Isometry, Point, Translation},
-        shape::{Shape, TriMesh},
-    },
+    na::Isometry3,
+    parry::{math::Isometry, shape::Shape},
     plugin::{NoUserData, RapierPhysicsPlugin},
     rapier::geometry::BoundingVolume,
     render::RapierDebugRenderPlugin,
@@ -42,27 +33,13 @@ use examples::plugin::ExamplesPlugin;
 
 fn main() {
     App::new()
-        .add_plugins((
-            DefaultPlugins,
-            // DefaultPlugins.set(RenderPlugin {
-            //     render_creation: RenderCreation::Automatic(WgpuSettings {
-            //         features: WgpuFeatures::POLYGON_MODE_LINE,
-            //         ..default()
-            //     }),
-            //     ..default()
-            // }),
-            WireframePlugin,
-        ))
+        .add_plugins((DefaultPlugins, WireframePlugin))
         .add_plugins((
             RapierPhysicsPlugin::<NoUserData>::default(),
             RapierDebugRenderPlugin::default(),
         ))
         .add_plugins(ExamplesPlugin)
         .add_plugins(DefaultRaycastingPlugin)
-        .insert_resource(WireframeConfig {
-            global: false,
-            default_color: Color::WHITE,
-        })
         .add_systems(Startup, setup)
         .run();
 }
@@ -73,14 +50,12 @@ fn setup(
     meshes_assets: ResMut<Assets<Mesh>>,
 ) {
     let mesh = Cuboid::new(1., 1., 1.).mesh();
-    let meshes = slice_bevy_mesh_iterative(&mesh, 1, Some(Vec3A::X));
+    let meshes = slice_bevy_mesh_iterative(&mesh, 2, Some(Vec3A::X));
 
     let mut colliders: Vec<Collider> = Vec::with_capacity(meshes.len());
     for mesh in meshes.iter() {
         // It's a bevy Mesh we generated, we know that it is in a compatible format
-        let mut collider =
-            Collider::from_bevy_mesh(&mesh, &ComputedColliderShape::ConvexHull).unwrap();
-        // collider.set_scale(1.05 * Vec3::ONE, 2);
+        let collider = Collider::from_bevy_mesh(&mesh, &ComputedColliderShape::ConvexHull).unwrap();
         colliders.push(collider);
     }
 
@@ -95,23 +70,13 @@ fn setup(
                 collider_2.into(),
                 &Isometry3::identity(),
             ) {
-                info!("Collision between frag {} and {}", i, j + i + 1);
                 let attach_point_2 = collider_2.raw.0.compute_local_aabb().center();
-                joints.push((j, (attach_point_2 - attach_point_1).into()));
-            } else {
-                info!("No collision between frag {} and {}", i, j + i + 1);
+                joints.push((j + i + 1, (attach_point_2 - attach_point_1).into()));
             }
         }
         if !joints.is_empty() {
-            // TODO Do better than this
-
             all_joints.insert(i, joints);
         }
-    }
-
-    for collider in colliders.iter_mut() {
-        // collider.set_scale(0.5 * Vec3::ONE, 2);
-        // collider.promote_scaled_shape();
     }
 
     spawn_fragments_entities(
@@ -120,7 +85,7 @@ fn setup(
         meshes_assets,
         &meshes,
         &colliders,
-        &all_joints, // &joints,
+        &all_joints,
     );
 }
 
@@ -130,14 +95,12 @@ fn spawn_fragments_entities(
     mut meshes_assets: ResMut<Assets<Mesh>>,
     frag_meshes: &Vec<Mesh>,
     frag_colliders: &Vec<Collider>,
-    all_joints: &HashMap<usize, Vec<(usize, Vec3)>>, // translations: &Vec<Translation3<f32>>,
-                                                     // joints: &HashMap<usize, Vec<usize>>,
+    all_joints: &HashMap<usize, Vec<(usize, Vec3)>>,
 ) {
     let mut entity_map = Vec::new();
 
-    for (index, (mesh, collider)) in frag_meshes.iter().zip(frag_colliders.iter()).enumerate() {
-        let pos = Vec3::new(0. * index as f32, 3., 0.);
-        info!("Spawning frag at pos {:?}, index {}", pos, index);
+    for (mesh, collider) in frag_meshes.iter().zip(frag_colliders.iter()) {
+        let pos = Vec3::new(0. as f32, 3., 0.);
         let entity = create_fragment_entity(
             &mut materials,
             &mut meshes_assets,
@@ -150,22 +113,14 @@ fn spawn_fragments_entities(
     }
 
     for (&from, to_fragments) in all_joints.iter() {
-        let from_entity = entity_map[from];
+        let parent_entity = entity_map[from];
         for (to, anchor) in to_fragments.iter() {
-            let to_entity = entity_map[*to];
-            // TODO attach point
-            // let anchor = Vec3::new(-1., 0., 0.); // TODO Tmp Override
+            let child = entity_map[*to];
             let joint = FixedJointBuilder::new()
                 .local_anchor1(*anchor)
                 .local_anchor2(*anchor);
-            info!("Spawning joint with anchor: {:?} ", anchor);
-            let child_entity = commands
-                .spawn((
-                    // SpatialBundle::default(),
-                    ImpulseJoint::new(to_entity, joint),
-                ))
-                .id();
-            commands.entity(from_entity).add_child(child_entity);
+            let child_entity = commands.spawn((ImpulseJoint::new(child, joint),)).id();
+            commands.entity(parent_entity).add_child(child_entity);
         }
     }
 }
@@ -187,10 +142,6 @@ fn create_fragment_entity(
                 material: materials.add(Color::rgb_u8(124, 144, 255)),
                 ..default()
             },
-            // Wireframe,
-            // WireframeColor {
-            //     color: Color::GREEN,
-            // },
             RigidBody::Dynamic,
             collider.clone(),
             ActiveCollisionTypes::default(),
