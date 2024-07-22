@@ -1,8 +1,8 @@
 use bevy::render::mesh::Mesh as RenderMesh;
 use bevy::{log::warn, utils::HashMap};
 use ghx_constrained_delaunay::constrained_triangulation::constrained_triangulation_from_3d_planar_vertices;
-use ghx_constrained_delaunay::triangulation::TriangulationConfiguration;
-use ghx_constrained_delaunay::triangulation_from_3d_planar_vertices;
+use ghx_constrained_delaunay::triangulation::TriangulationError;
+
 use glam::{Vec2, Vec3A};
 
 use crate::types::{SlicedMeshData, Submesh};
@@ -136,18 +136,21 @@ fn internal_slice_submesh(
     sliced_mesh_data.update_generation();
 
     // TODO Could we easily know beforehand if the mesh intersects the slicing plane ?
-    // TODO Could maybe at least do a convex hull/aabb check against the plane to return early if w are sure that there won't be an intersection.
+    // TODO Could maybe at least do a convex hull/aabb check against the plane to return early if we are sure that there won't be an intersection.
     if top_fragment.indices().is_empty() || bottom_fragment.indices().is_empty() {
         None
     } else {
-        triangulate_and_fill_sliced_faces(
+        match triangulate_and_fill_sliced_faces(
             &plane,
             &mut top_fragment,
             &mut bottom_fragment,
             &sliced_contour,
             sliced_mesh_data,
-        );
-        Some([top_fragment, bottom_fragment])
+        ) {
+            Ok(_) => Some([top_fragment, bottom_fragment]),
+            // TODO Error handling: bubble up the error
+            Err(_) => None,
+        }
     }
 }
 
@@ -157,7 +160,7 @@ fn triangulate_and_fill_sliced_faces(
     bottom_fragment: &mut Submesh,
     sliced_contour: &Vec<Edge>,
     sliced_mesh_data: &mut SlicedMeshData,
-) {
+) -> Result<(), TriangulationError> {
     // TODO Add notes somewhere
     // - In slicing, edges all share the same orientation: CW looking in the direction of the plane normal
     // - During planar transformation, winding order order in preserved
@@ -197,7 +200,7 @@ fn triangulate_and_fill_sliced_faces(
         plane.normal(),
         &local_edges,
         ConstrainedTriangulationConfiguration::default(),
-    );
+    )?;
 
     // TODO Optimization: share allocation
     let mut planar_vert_id_to_frag_global_verts_ids: Vec<Option<(VertexId, VertexId)>> =
@@ -230,6 +233,7 @@ fn triangulate_and_fill_sliced_faces(
         top_fragment.indices_mut().extend(top_triangle);
         bottom_fragment.indices_mut().extend(bottom_triangle);
     }
+    Ok(())
 }
 
 pub enum TrianglePlaneIntersection {

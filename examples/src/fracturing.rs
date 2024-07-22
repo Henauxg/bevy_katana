@@ -37,7 +37,7 @@ use bevy_rapier3d::{
 use examples::{ball::BallSensor, plugin::ExamplesPlugin};
 
 #[derive(Component)]
-struct ExamleMesh;
+struct ExampleMesh;
 
 #[derive(Component)]
 struct FragmentedMesh;
@@ -79,7 +79,7 @@ fn spawn_mesh(
             material: materials.add(Color::rgb_u8(124, 144, 255)),
             ..default()
         },
-        ExamleMesh,
+        ExampleMesh,
         RigidBody::Dynamic,
         Collider::from_bevy_mesh(&mesh, &ComputedColliderShape::ConvexHull).unwrap(),
         ActiveCollisionTypes::default(),
@@ -95,7 +95,7 @@ fn spawn_frac_mesh(
     meshes_assets: ResMut<Assets<Mesh>>,
 ) {
     let mesh = Cuboid::new(1., 1., 1.).mesh();
-    let meshes = slice_bevy_mesh_iterative(&mesh, 3, None);
+    let meshes = slice_bevy_mesh_iterative(&mesh, 4, None);
 
     let mut colliders: Vec<Collider> = Vec::with_capacity(meshes.len());
     for mesh in meshes.iter() {
@@ -111,7 +111,7 @@ fn spawn_frac_mesh(
         for (j, collider_2) in colliders[i + 1..colliders.len()].iter().enumerate() {
             if check_collision(
                 collider_1.into(),
-                &&Isometry3::identity(),
+                &Isometry3::identity(),
                 collider_2.into(),
                 &Isometry3::identity(),
             ) {
@@ -136,7 +136,7 @@ fn spawn_frac_mesh(
 
 fn respawn_mesh(
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    query_cubes: Query<Entity, With<ExamleMesh>>,
+    query_cubes: Query<Entity, With<ExampleMesh>>,
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes_assets: ResMut<Assets<Mesh>>,
@@ -218,7 +218,7 @@ fn create_fragment_entity(
                 material: materials.add(Color::rgb_u8(124, 144, 255)),
                 ..default()
             },
-            ExamleMesh,
+            ExampleMesh,
             FragmentedMesh,
             RigidBody::Dynamic,
             collider.clone(),
