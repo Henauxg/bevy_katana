@@ -1,7 +1,7 @@
 use bevy::{
-    app::PluginGroup,
-    app::{App, Startup, Update},
+    app::{App, PluginGroup, Startup, Update},
     asset::{Assets, Handle},
+    color::{palettes::css::GREEN, Color},
     hierarchy::DespawnRecursiveExt,
     input::ButtonInput,
     log::info,
@@ -12,11 +12,11 @@ use bevy::{
     },
     prelude::{
         Commands, Component, Cuboid, Entity, Event, EventReader, EventWriter, Gizmos,
-        IntoSystemConfigs, KeyCode, MouseButton, Query, Res, ResMut, Resource, With, Without,
+        IntoSystemConfigs, KeyCode, MeshBuilder, MouseButton, Query, Res, ResMut, Resource, With,
+        Without,
     },
     render::{
         camera::Camera,
-        color::Color,
         mesh::{Mesh, Meshable},
         settings::{RenderCreation, WgpuFeatures, WgpuSettings},
         RenderPlugin,
@@ -30,7 +30,6 @@ use bevy_ghx_destruction::{
     slicing::slicing::{slice_bevy_mesh, slice_bevy_mesh_iterative},
     types::Plane,
 };
-use bevy_mod_billboard::plugin::BillboardPlugin;
 use bevy_mod_raycast::prelude::*;
 use bevy_rapier3d::{
     dynamics::RigidBody,
@@ -53,6 +52,9 @@ fn main() {
                 ..default()
             }),
             WireframePlugin,
+            RapierPhysicsPlugin::<NoUserData>::default(),
+            CursorRayPlugin,
+            ExamplesPlugin,
         ))
         .insert_resource(WireframeConfig {
             global: true,
@@ -62,9 +64,6 @@ fn main() {
         .add_event::<SliceEvent>()
         .add_event::<FragmenterEvent>()
         .add_event::<DeterministicSliceEvent>()
-        .add_plugins((ExamplesPlugin, BillboardPlugin))
-        .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
-        .add_plugins(DefaultRaycastingPlugin)
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -132,7 +131,7 @@ fn setup(
         SliceMesh,
         PbrBundle {
             mesh: meshes_assets.add(Cuboid::new(1.0, 1.0, 1.0)),
-            material: materials.add(Color::rgb_u8(124, 144, 255)),
+            material: materials.add(Color::srgb_u8(124, 144, 255)),
             transform: Transform::from_xyz(5.0, 0.5, 0.0),
             ..default()
         },
@@ -268,7 +267,7 @@ fn spawn_fragmented_object(
     for _ in spawn_fragmenter_events.read() {
         //let mesh = Cylinder::new(1.0, 5.0).mesh().build();
 
-        let mesh = Cuboid::new(1., 1., 1.).mesh();
+        let mesh = Cuboid::new(1., 1., 1.).mesh().build();
 
         let fragments = slice_bevy_mesh_iterative(&mesh, 2, None);
         spawn_fragment(
@@ -298,7 +297,7 @@ fn spawn_sliceable_object(
             PbrBundle {
                 //mesh: meshes_assets.add(Cylinder::new(1.0, 5.0)),
                 mesh: meshes_assets.add(Cuboid::new(1.0, 1.0, 1.0)),
-                material: materials.add(Color::rgb_u8(124, 144, 255)),
+                material: materials.add(Color::srgb_u8(124, 144, 255)),
                 transform: Transform::from_xyz(5.0, 0.5, 0.0),
                 ..default()
             },
@@ -314,13 +313,13 @@ fn deterministic_slice_object(
     mut meshes_assets: ResMut<Assets<Mesh>>,
     q_sliceables: Query<
         (Entity, &Transform, &GlobalTransform, &Handle<Mesh>),
-        (With<SliceableObject>),
+        With<SliceableObject>,
     >,
 ) {
     if !events.is_empty() {
         events.clear();
 
-        for (entity, transform, gtrsfrm, mesh_handle) in q_sliceables.iter() {
+        for (entity, transform, _gtrsfrm, mesh_handle) in q_sliceables.iter() {
             let mesh = meshes_assets.get(mesh_handle).unwrap();
             let slice_center = Vec3A::from(transform.translation);
 
@@ -359,13 +358,13 @@ fn spawn_fragment(
             PbrBundle {
                 mesh: mesh_handle.clone(),
                 transform: Transform::from_xyz(pos.x, pos.y, pos.z),
-                material: materials.add(Color::rgb_u8(124, 144, 255)),
+                material: materials.add(Color::srgb_u8(124, 144, 255)),
                 ..default()
             },
             SliceableObject,
             Wireframe,
             WireframeColor {
-                color: Color::GREEN,
+                color: Color::Srgba(GREEN),
             },
             RigidBody::Dynamic,
             Collider::from_bevy_mesh(&mesh, &ComputedColliderShape::ConvexHull).unwrap(),

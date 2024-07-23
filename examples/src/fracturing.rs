@@ -2,20 +2,18 @@ use std::collections::HashMap;
 
 use bevy::{
     app::{App, Startup, Update},
-    asset::{AssetServer, Assets},
+    asset::Assets,
+    color::Color,
     hierarchy::{BuildChildren, DespawnRecursiveExt},
     input::ButtonInput,
     log::info,
-    math::{Vec3, Vec3A},
+    math::Vec3,
     pbr::{wireframe::WireframePlugin, PbrBundle, StandardMaterial},
     prelude::{
         default, Commands, Component, Cuboid, Entity, EventReader, IntoSystemConfigs, KeyCode,
-        Query, Res, ResMut, With,
+        MeshBuilder, Query, Res, ResMut, With,
     },
-    render::{
-        color::Color,
-        mesh::{Mesh, Meshable},
-    },
+    render::mesh::{Mesh, Meshable},
     transform::components::Transform,
     DefaultPlugins,
 };
@@ -29,12 +27,12 @@ use bevy_rapier3d::{
     },
     na::Isometry3,
     parry::{math::Isometry, shape::Shape},
-    pipeline::{CollisionEvent, ContactForceEvent},
+    pipeline::ContactForceEvent,
     plugin::{NoUserData, RapierPhysicsPlugin},
     rapier::geometry::BoundingVolume,
     render::RapierDebugRenderPlugin,
 };
-use examples::{ball::BallSensor, plugin::ExamplesPlugin};
+use examples::plugin::ExamplesPlugin;
 
 #[derive(Component)]
 struct ExampleMesh;
@@ -50,7 +48,7 @@ fn main() {
             RapierDebugRenderPlugin::default(),
         ))
         .add_plugins(ExamplesPlugin)
-        .add_plugins(DefaultRaycastingPlugin)
+        .add_plugins(CursorRayPlugin)
         .add_systems(Startup, setup)
         .add_systems(Update, (respawn_mesh, handle_collisions).chain())
         .run();
@@ -76,7 +74,7 @@ fn spawn_mesh(
         PbrBundle {
             mesh: mesh_handle.clone(),
             transform: Transform::from_xyz(pos.x, pos.y, pos.z),
-            material: materials.add(Color::rgb_u8(124, 144, 255)),
+            material: materials.add(Color::srgb_u8(124, 144, 255)),
             ..default()
         },
         ExampleMesh,
@@ -94,7 +92,7 @@ fn spawn_frac_mesh(
     materials: ResMut<Assets<StandardMaterial>>,
     meshes_assets: ResMut<Assets<Mesh>>,
 ) {
-    let mesh = Cuboid::new(1., 1., 1.).mesh();
+    let mesh = Cuboid::new(1., 1., 1.).mesh().build();
     let meshes = slice_bevy_mesh_iterative(&mesh, 4, None);
 
     let mut colliders: Vec<Collider> = Vec::with_capacity(meshes.len());
@@ -145,7 +143,7 @@ fn respawn_mesh(
         for entity in query_cubes.iter() {
             commands.entity(entity).despawn_recursive();
         }
-        let mesh = Cuboid::new(1., 1., 1.).mesh();
+        let mesh = Cuboid::new(1., 1., 1.).mesh().build();
         let pos = Vec3::new(0., 0., 0.);
         spawn_mesh(
             &mut materials,
@@ -215,7 +213,7 @@ fn create_fragment_entity(
             PbrBundle {
                 mesh: mesh_handle.clone(),
                 transform: Transform::from_translation(pos),
-                material: materials.add(Color::rgb_u8(124, 144, 255)),
+                material: materials.add(Color::srgb_u8(124, 144, 255)),
                 ..default()
             },
             ExampleMesh,

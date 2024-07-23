@@ -3,6 +3,7 @@ use std::f32::consts::PI;
 use bevy::{
     app::{App, Plugin, Startup, Update},
     asset::Assets,
+    color::{Alpha, Color},
     core_pipeline::core_3d::Camera3dBundle,
     diagnostic::FrameTimeDiagnosticsPlugin,
     ecs::{
@@ -17,7 +18,7 @@ use bevy::{
     },
     math::{primitives::Cylinder, EulerRot, Quat, Vec3},
     pbr::{AmbientLight, DirectionalLight, DirectionalLightBundle, PbrBundle, StandardMaterial},
-    render::{color::Color, mesh::Mesh},
+    render::mesh::Mesh,
     text::{BreakLineOn, Text, TextSection, TextStyle},
     transform::components::Transform,
     ui::{
@@ -27,7 +28,10 @@ use bevy::{
     utils::default,
 };
 use bevy_ghx_utils::{
-    camera::{toggle_auto_orbit, update_pan_orbit_camera, PanOrbitCamera},
+    camera::{
+        toggle_auto_orbit, update_pan_orbit_camera, PanOrbitCameraBundle, PanOrbitSettings,
+        PanOrbitState,
+    },
     systems::toggle_visibility,
 };
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
@@ -69,18 +73,21 @@ pub fn setup_camera(mut commands: Commands) {
     // Camera
     let camera_position = Vec3::new(0., 0., 10.5);
     let look_target = Vec3::ZERO;
-    commands.spawn((
-        Camera3dBundle {
+    commands.spawn((PanOrbitCameraBundle {
+        camera: Camera3dBundle {
             transform: Transform::from_translation(camera_position)
                 .looking_at(look_target, Vec3::Y),
             ..default()
         },
-        PanOrbitCamera {
+        state: PanOrbitState {
             radius: (look_target - camera_position).length(),
+            ..Default::default()
+        },
+        settings: PanOrbitSettings {
             auto_orbit: false,
             ..Default::default()
         },
-    ));
+    },));
 }
 
 pub fn setup_ui(mut commands: Commands) {
@@ -110,7 +117,7 @@ pub fn setup_ui(mut commands: Commands) {
         .spawn((
             // Pickable::IGNORE,
             NodeBundle {
-                background_color: Color::BLACK.with_a(0.6).into(),
+                background_color: Color::BLACK.with_alpha(0.6).into(),
                 style: Style {
                     position_type: PositionType::Absolute,
                     top: Val::Percent(1.),

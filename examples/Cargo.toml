@@ -7,10 +7,10 @@ edition = "2021"
 [dependencies]
 # Internal dependencies
 bevy_ghx_destruction = { version = "0.1.0", path = "../bevy_ghx_destruction" }
-bevy_ghx_utils = { git = "https://github.com/Henauxg/bevy_ghx_utils.git", rev = "70e1f17", version = "0.3.0-dev", default-features = true }
+bevy_ghx_utils = { version = "0.4.0", default-features = true }
 
 # External dependencies
-bevy = { version = "0.13", default-features = false, features = [
+bevy = { version = "0.14", default-features = false, features = [
     # Default features:
 
     "bevy_core_pipeline", # Common rendering abstractions
@@ -24,7 +24,7 @@ bevy = { version = "0.13", default-features = false, features = [
     "bevy_ui",            # UI toolkit
     "bevy_winit",         # winit window and input backend
     "default_font",       # Embed a minimal default font for text/UI
-    "multi-threaded",     # Run with multithreading
+    "multi_threaded",     # Run with multithreading
     "tonemapping_luts",   # Support different camera Tonemapping modes (enables KTX2+zstd)
 
     # Platform-specific:
@@ -38,18 +38,16 @@ bevy = { version = "0.13", default-features = false, features = [
     "dynamic_linking", # Dynamic linking for faster compile-times
 ] }
 # Does not seem to compile without this explicit include...
-bevy_gltf = { version = "0.13", default-features = false }
-tritet = "0.4.0"
-simple_delaunay_lib = "0.2.0"
-bevy_rapier3d = { version = "0.25.0", features = [
+bevy_gltf = { version = "0.14", default-features = false }
+bevy_rapier3d = { version = "0.27.0", features = [
     "simd-stable",
     "debug-render-3d",
 ] }
-bevy_egui = "0.26"
-bevy-inspector-egui = "0.23"
+bevy_egui = "0.28"
+bevy-inspector-egui = "0.25"
 rand = "0.8.5"
-bevy_mod_raycast = "0.17.0"
-bevy_mod_billboard = { version = "0.6.0", git = "https://github.com/kulkalkul/bevy_mod_billboard.git" }
+bevy_mod_raycast = "0.18.0"
+# bevy_mod_billboard = { version = "0.6.0", git = "https://github.com/kulkalkul/bevy_mod_billboard.git" }
 
 [[example]]
 name = "tetgen"

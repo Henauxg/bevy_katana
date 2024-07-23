@@ -1,14 +1,11 @@
 use bevy::{
     app::{App, Startup},
-    asset::Assets,
-    ecs::{
-        entity::Entity,
-        system::{Commands, ResMut},
-    },
+    ecs::{entity::Entity, system::Commands},
     hierarchy::BuildChildren,
     math::{primitives::Cuboid, Vec3},
-    pbr::{PbrBundle, StandardMaterial},
-    render::mesh::{Mesh, Meshable},
+    pbr::PbrBundle,
+    prelude::MeshBuilder,
+    render::mesh::Meshable,
     transform::components::Transform,
     utils::default,
     DefaultPlugins,
@@ -34,8 +31,8 @@ fn main() {
 }
 
 fn create_fixed_joints(
-    materials: &mut ResMut<Assets<StandardMaterial>>,
-    meshes_assets: &mut ResMut<Assets<Mesh>>,
+    // materials: &mut ResMut<Assets<StandardMaterial>>,
+    // meshes_assets: &mut ResMut<Assets<Mesh>>,
     commands: &mut Commands,
     pos: Vec<Vec3>,
 ) {
@@ -54,7 +51,7 @@ fn create_fixed_joints(
                 },
                 rigid_body,
                 Collider::from_bevy_mesh(
-                    &Cuboid::new(1.0, 1.0, 1.0).mesh(),
+                    &Cuboid::new(1.0, 1.0, 1.0).mesh().build(),
                     &ComputedColliderShape::ConvexHull,
                 )
                 .unwrap(),
@@ -74,8 +71,8 @@ fn create_fixed_joints(
 }
 
 pub fn setup_physics(
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut meshes_assets: ResMut<Assets<Mesh>>,
+    // mut materials: ResMut<Assets<StandardMaterial>>,
+    // mut meshes_assets: ResMut<Assets<Mesh>>,
     mut commands: Commands,
 ) {
     let mut pos = Vec::new();
@@ -89,5 +86,5 @@ pub fn setup_physics(
     pos.push(Vec3::new(1., 1.5, 0.));
     pos.push(Vec3::new(1., 1.5, 1.));
 
-    create_fixed_joints(&mut materials, &mut meshes_assets, &mut commands, pos);
+    create_fixed_joints(&mut commands, pos);
 }

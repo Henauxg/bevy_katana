@@ -3,6 +3,7 @@ use std::time::Duration;
 use bevy::{
     app::{App, Plugin, PostUpdate, Startup, Update},
     asset::{Assets, Handle},
+    color::{Alpha, Color, LinearRgba},
     ecs::{
         component::Component,
         entity::Entity,
@@ -13,16 +14,16 @@ use bevy::{
     hierarchy::{BuildChildren, DespawnRecursiveExt},
     input::{common_conditions::input_just_pressed, keyboard::KeyCode},
     math::primitives::Sphere,
-    pbr::{AlphaMode, PbrBundle, StandardMaterial},
+    pbr::{PbrBundle, StandardMaterial},
+    prelude::{AlphaMode, TransformBundle},
     render::{
         camera::Camera,
-        color::Color,
         mesh::{Mesh, Meshable},
     },
     time::{Time, Timer, TimerMode},
     transform::{
         components::{GlobalTransform, Transform},
-        TransformBundle, TransformSystem,
+        TransformSystem,
     },
     utils::default,
 };
@@ -75,7 +76,7 @@ pub fn setup_balls(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let material = materials.add(StandardMaterial {
-        emissive: Color::rgb_linear(9000.0, 3000.0, 23000.0),
+        emissive: LinearRgba::rgb(9000.0, 3000.0, 23000.0),
         ..default()
     });
     let mesh = meshes.add(Sphere::new(BALL_RADIUS).mesh().ico(5).unwrap());
@@ -83,7 +84,7 @@ pub fn setup_balls(
     // Spawn previsualisation ball
     let previs_mesh = meshes.add(Sphere::new(PREVIS_BALL_RADIUS).mesh().ico(5).unwrap());
     let previs_material = materials.add(StandardMaterial {
-        base_color: Color::WHITE.with_a(0.2),
+        base_color: Color::WHITE.with_alpha(0.2),
         alpha_mode: AlphaMode::Blend,
         ..default()
     });
