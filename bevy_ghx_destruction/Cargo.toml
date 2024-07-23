@@ -8,13 +8,8 @@ edition = "2021"
 ghx_constrained_delaunay = { git = "https://github.com/Henauxg/ghx_constrained_delaunay.git", version = "0.1.0" }
 
 # External dependencies
-bevy = { version = "0.13.0", default-features = false, features = [] }
+bevy = { version = "0.14.0", default-features = false, features = [] }
 rand = "0.8.5"
 ordered-float = "4.2.0"
-bevy_rapier3d = { version = "0.25.0", features = [
-    "simd-stable",
-    "debug-render-3d",
-] }
-cdt = "0.1.0"
-glam = "0.25"
+glam = { version = ">=0.21, <=0.28" }
 lazy_static = "1.4.0"

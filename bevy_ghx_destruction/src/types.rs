@@ -2,31 +2,30 @@ use bevy::render::mesh::Mesh as RenderMesh;
 use bevy::render::primitives::Aabb;
 use bevy::{
     math::{Vec2, Vec3A},
-    prelude::Entity,
     render::{
         mesh::{Indices, PrimitiveTopology, VertexAttributeValues},
         render_asset::RenderAssetUsages,
     },
 };
-use bevy_rapier3d::dynamics::{ImpulseJoint, RigidBody};
+// use bevy_rapier3d::dynamics::{ImpulseJoint, RigidBody};
 use ghx_constrained_delaunay::hashbrown::HashMap;
 use ghx_constrained_delaunay::types::VertexId;
 use glam::Vec3;
 
 use crate::utils::is_above_plane;
 
-trait Indexable {
-    fn at(&self, idx: usize) -> usize;
-}
+// trait Indexable {
+//     fn at(&self, idx: usize) -> usize;
+// }
 
-impl Indexable for Indices {
-    fn at(&self, idx: usize) -> usize {
-        match self {
-            Indices::U16(vec) => vec[idx] as usize,
-            Indices::U32(vec) => vec[idx] as usize,
-        }
-    }
-}
+// impl Indexable for Indices {
+//     fn at(&self, idx: usize) -> usize {
+//         match self {
+//             Indices::U16(vec) => vec[idx] as usize,
+//             Indices::U32(vec) => vec[idx] as usize,
+//         }
+//     }
+// }
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
 pub enum PlaneSide {
@@ -42,174 +41,174 @@ pub enum LinkType {
     Nil,
 }
 
-/// Junction between two chunks. A link is oriented: from -> to. A link is rather fixed (do exist), broken or nil(do not exist)
-#[derive(Debug, Clone, PartialEq)]
-pub struct Link {
-    from: Node,
-    to: Node,
-    joint: ImpulseJoint,
-    link_type: LinkType,
-}
+// /// Junction between two chunks. A link is oriented: from -> to. A link is rather fixed (do exist), broken or nil(do not exist)
+// #[derive(Debug, Clone, PartialEq)]
+// pub struct Link {
+//     from: Node,
+//     to: Node,
+//     joint: ImpulseJoint,
+//     link_type: LinkType,
+// }
 
-impl Link {
-    pub fn new(from: Node, to: Node, joint: ImpulseJoint) -> Link {
-        Link {
-            from: from,
-            to: to,
-            joint: joint,
-            link_type: LinkType::Nil,
-        }
-    }
-}
+// impl Link {
+//     pub fn new(from: Node, to: Node, joint: ImpulseJoint) -> Link {
+//         Link {
+//             from: from,
+//             to: to,
+//             joint: joint,
+//             link_type: LinkType::Nil,
+//         }
+//     }
+// }
 
-/// Contains the chunk, its links, the chunk's neihbor and its rigid body
-#[derive(Debug, Clone, PartialEq)]
-pub struct Node {
-    chunk: Entity,
-    links: Vec<Link>,
-    neighbors: Vec<Node>,
-    rigid_body: RigidBody,
-    has_broken_links: bool,
-}
+// /// Contains the chunk, its links, the chunk's neihbor and its rigid body
+// #[derive(Debug, Clone, PartialEq)]
+// pub struct Node {
+//     chunk: Entity,
+//     links: Vec<Link>,
+//     neighbors: Vec<Node>,
+//     rigid_body: RigidBody,
+//     has_broken_links: bool,
+// }
 
-impl Node {
-    pub fn new(chunk: Entity) -> Node {
-        Node {
-            chunk: chunk,
-            links: Vec::new(),
-            neighbors: Vec::new(),
-            rigid_body: RigidBody::Fixed, // freeze
-            has_broken_links: false,
-        }
-    }
+// impl Node {
+//     pub fn new(chunk: Entity) -> Node {
+//         Node {
+//             chunk: chunk,
+//             links: Vec::new(),
+//             neighbors: Vec::new(),
+//             rigid_body: RigidBody::Fixed, // freeze
+//             has_broken_links: false,
+//         }
+//     }
 
-    fn broken_links(&mut self) {
-        self.has_broken_links = true;
-    }
+//     fn broken_links(&mut self) {
+//         self.has_broken_links = true;
+//     }
 
-    fn clean_links(&mut self, link: Link) -> Link {
-        // Remove the broken link from the list of all the links of the node
-        let link = self.links.remove(
-            self.links
-                .iter()
-                .position(|x| *x == link)
-                .expect("can't find the link in the node"),
-        );
+//     fn clean_links(&mut self, link: Link) -> Link {
+//         // Remove the broken link from the list of all the links of the node
+//         let link = self.links.remove(
+//             self.links
+//                 .iter()
+//                 .position(|x| *x == link)
+//                 .expect("can't find the link in the node"),
+//         );
 
-        // Remove the neighbor which do not have any connection with this node anymore
-        self.neighbors.remove(
-            self.neighbors
-                .iter()
-                .position(|x| *x == link.to)
-                .expect("can't find the neighbor of the node for the current link"),
-        );
-        link
-    }
+//         // Remove the neighbor which do not have any connection with this node anymore
+//         self.neighbors.remove(
+//             self.neighbors
+//                 .iter()
+//                 .position(|x| *x == link.to)
+//                 .expect("can't find the neighbor of the node for the current link"),
+//         );
+//         link
+//     }
 
-    fn unfreeze(&mut self) {
-        // Allow the chunk to move
-        self.rigid_body = RigidBody::Dynamic;
-    }
+//     fn unfreeze(&mut self) {
+//         // Allow the chunk to move
+//         self.rigid_body = RigidBody::Dynamic;
+//     }
 
-    pub fn clean_node(&mut self) {
-        // List of all the broken links
-        let broken_links: Vec<_> = self
-            .links
-            .iter()
-            .filter(|link| link.link_type == LinkType::Broken)
-            .cloned()
-            .collect();
+//     pub fn clean_node(&mut self) {
+//         // List of all the broken links
+//         let broken_links: Vec<_> = self
+//             .links
+//             .iter()
+//             .filter(|link| link.link_type == LinkType::Broken)
+//             .cloned()
+//             .collect();
 
-        // Remove the broken links from the node and the connections between the node and the neighbors
-        for link in broken_links {
-            let mut broken_link = self.clean_links(link.clone());
-            broken_link.to.clean_links(link);
-        }
+//         // Remove the broken links from the node and the connections between the node and the neighbors
+//         for link in broken_links {
+//             let mut broken_link = self.clean_links(link.clone());
+//             broken_link.to.clean_links(link);
+//         }
 
-        //No more broken links inside the node
-        self.has_broken_links = false;
-    }
-}
+//         //No more broken links inside the node
+//         self.has_broken_links = false;
+//     }
+// }
 
-#[derive(Debug, Clone)]
-pub struct ChunkGraph {
-    graph: Vec<Node>,
-}
+// #[derive(Debug, Clone)]
+// pub struct ChunkGraph {
+//     graph: Vec<Node>,
+// }
 
-impl ChunkGraph {
-    pub fn new(graph: Vec<Node>) -> ChunkGraph {
-        ChunkGraph { graph: graph }
-    }
+// impl ChunkGraph {
+//     pub fn new(graph: Vec<Node>) -> ChunkGraph {
+//         ChunkGraph { graph: graph }
+//     }
 
-    fn remove_node_from_graph(&mut self, mut node: Node) {
-        // Look for the node to be removed from the graph
-        self.graph.remove(
-            self.graph
-                .iter()
-                .position(|x| *x == node)
-                .expect("can't find the node in the graph"),
-        );
+//     fn remove_node_from_graph(&mut self, mut node: Node) {
+//         // Look for the node to be removed from the graph
+//         self.graph.remove(
+//             self.graph
+//                 .iter()
+//                 .position(|x| *x == node)
+//                 .expect("can't find the node in the graph"),
+//         );
 
-        //Since the node is not connected to the graph, we can allow the chunk to move
-        node.unfreeze();
-    }
+//         //Since the node is not connected to the graph, we can allow the chunk to move
+//         node.unfreeze();
+//     }
 
-    /// Update the graph node only if a link is broken
-    pub fn update_graph(&mut self) {
-        // Look for all nodes with broken links
-        for node in self.graph.iter_mut() {
-            if node.has_broken_links {
-                // Clean the node from its broken links
-                node.clean_node();
-            }
-        }
-        // Update the graph's connections
-        self.clean_graph();
-    }
+//     /// Update the graph node only if a link is broken
+//     pub fn update_graph(&mut self) {
+//         // Look for all nodes with broken links
+//         for node in self.graph.iter_mut() {
+//             if node.has_broken_links {
+//                 // Clean the node from its broken links
+//                 node.clean_node();
+//             }
+//         }
+//         // Update the graph's connections
+//         self.clean_graph();
+//     }
 
-    fn clean_graph(&mut self) {
-        // Look for all the fixed chunks
-        let fixed_nodes: Vec<Node> = self
-            .graph
-            .iter()
-            .filter(|node| node.rigid_body == RigidBody::Fixed)
-            .cloned()
-            .collect();
+//     fn clean_graph(&mut self) {
+//         // Look for all the fixed chunks
+//         let fixed_nodes: Vec<Node> = self
+//             .graph
+//             .iter()
+//             .filter(|node| node.rigid_body == RigidBody::Fixed)
+//             .cloned()
+//             .collect();
 
-        let mut search = self.graph.clone();
+//         let mut search = self.graph.clone();
 
-        // For each nodes in the current searching process, we look at each of them are not connected to on of those current nodes. For those remaining,we do reapeat theproces until all nodes are not connected together or if there is no more nodes in thesearching process
-        for fixed_node in fixed_nodes {
-            if search.contains(&fixed_node) {
-                let mut visited = Vec::new();
-                self.travel(&fixed_node, &search, &mut visited);
-                search = search
-                    .iter()
-                    .filter(|node| visited.contains(node) == false)
-                    .cloned()
-                    .collect();
-            }
-        }
+//         // For each nodes in the current searching process, we look at each of them are not connected to on of those current nodes. For those remaining,we do reapeat theproces until all nodes are not connected together or if there is no more nodes in thesearching process
+//         for fixed_node in fixed_nodes {
+//             if search.contains(&fixed_node) {
+//                 let mut visited = Vec::new();
+//                 self.travel(&fixed_node, &search, &mut visited);
+//                 search = search
+//                     .iter()
+//                     .filter(|node| visited.contains(node) == false)
+//                     .cloned()
+//                     .collect();
+//             }
+//         }
 
-        // For all the remaining nodes, we allow their respecting chunks to move
-        for restricted_node in search {
-            self.remove_node_from_graph(restricted_node);
-        }
-    }
+//         // For all the remaining nodes, we allow their respecting chunks to move
+//         for restricted_node in search {
+//             self.remove_node_from_graph(restricted_node);
+//         }
+//     }
 
-    //TODO: no recursive
-    fn travel(&self, fixed_node: &Node, search: &Vec<Node>, visited: &mut Vec<Node>) {
-        // Look at all the conections from the main node. Thos node would be remove from the searching process
-        if search.contains(fixed_node) && !visited.contains(fixed_node) {
-            visited.push(fixed_node.clone());
+//     //TODO: no recursive
+//     fn travel(&self, fixed_node: &Node, search: &Vec<Node>, visited: &mut Vec<Node>) {
+//         // Look at all the conections from the main node. Thos node would be remove from the searching process
+//         if search.contains(fixed_node) && !visited.contains(fixed_node) {
+//             visited.push(fixed_node.clone());
 
-            for neighbor_id in 0..fixed_node.neighbors.len() {
-                let neighbor = &fixed_node.neighbors[neighbor_id];
-                self.travel(neighbor, search, visited);
-            }
-        }
-    }
-}
+//             for neighbor_id in 0..fixed_node.neighbors.len() {
+//                 let neighbor = &fixed_node.neighbors[neighbor_id];
+//                 self.travel(neighbor, search, visited);
+//             }
+//         }
+//     }
+// }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Plane {
