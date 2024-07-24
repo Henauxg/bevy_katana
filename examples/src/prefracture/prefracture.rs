@@ -228,7 +228,7 @@ fn handle_collisions(
                     None
                 };
                 if let Some(other_entity) = other_entity {
-                    if let Ok((full_mesh_root_entity)) = full_meshes.get(other_entity) {
+                    if let Ok(full_mesh_root_entity) = full_meshes.get(other_entity) {
                         let full_mesh_root_transform =
                             transforms.get(full_mesh_root_entity.0).unwrap();
                         commands.entity(full_mesh_root_entity.0).despawn_recursive();
@@ -236,7 +236,7 @@ fn handle_collisions(
                     }
                 }
             }
-            CollisionEvent::Stopped(e1, e2, flags) => {
+            CollisionEvent::Stopped(_e1, _e2, _flags) => {
                 // TODO Could count the sensors in presence for each full mesh and swap back to a full mesh after some time ?
             }
         }

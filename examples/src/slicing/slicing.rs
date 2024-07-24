@@ -149,7 +149,7 @@ fn raycast(
     mut spawn_sliceable_events: EventWriter<SliceEvent>,
     mut slicer: ResMut<Slicer>,
 ) {
-    if let Some(cursor_ray) = **cursor_ray {
+    if let Some(cursor_ray) = cursor_ray.0 {
         raycast.debug_cast_ray(cursor_ray, &default(), &mut gizmos);
         let hits = raycast.cast_ray(cursor_ray, &default());
 
@@ -189,8 +189,6 @@ fn slice_from_mouse(
         if let Ok((transform, global_transform, mesh_handle)) = sliceables.get(event.entity) {
             let mesh = meshes_assets.get(mesh_handle).unwrap();
 
-            let slice_center = Vec3A::from(transform.translation);
-
             // let qr: Vec3 =
             //     event.begin - camera_tranform.translation - global_transform.translation();
             // let qs = event.end - camera_tranform.translation - global_transform.translation();
@@ -207,27 +205,27 @@ fn slice_from_mouse(
 
             let plane = Plane::new(local_begin, (local_qr.cross(local_qs).normalize()).into());
 
-            let meshes = slice_bevy_mesh(plane, &mesh);
+            if let Some(meshes) = slice_bevy_mesh(plane, &mesh) {
+                commands.entity(event.entity).despawn();
 
-            commands.entity(event.entity).despawn();
+                // commands.spawn((
+                //     PbrBundle {
+                //         mesh: meshes_assets.add(Plane3d::new(qr.cross(qs))),
+                //         transform: Transform::from_translation(event.begin),
+                //         material: materials.add(Color::rgb_u8(124, 144, 255)),
+                //         ..default()
+                //     },
+                //     SliceableObject,
+                // ));
 
-            // commands.spawn((
-            //     PbrBundle {
-            //         mesh: meshes_assets.add(Plane3d::new(qr.cross(qs))),
-            //         transform: Transform::from_translation(event.begin),
-            //         material: materials.add(Color::rgb_u8(124, 144, 255)),
-            //         ..default()
-            //     },
-            //     SliceableObject,
-            // ));
-
-            spawn_fragment(
-                meshes,
-                &mut materials,
-                &mut meshes_assets,
-                &mut commands,
-                slice_center,
-            );
+                spawn_fragments(
+                    &meshes,
+                    &mut materials,
+                    &mut meshes_assets,
+                    &mut commands,
+                    transform.translation,
+                );
+            }
         }
     }
 }
@@ -265,17 +263,15 @@ fn spawn_fragmented_object(
     mut spawn_fragmenter_events: EventReader<FragmenterEvent>,
 ) {
     for _ in spawn_fragmenter_events.read() {
-        //let mesh = Cylinder::new(1.0, 5.0).mesh().build();
-
         let mesh = Cuboid::new(1., 1., 1.).mesh().build();
 
         let fragments = slice_bevy_mesh_iterative(&mesh, 2, None);
-        spawn_fragment(
-            fragments.into(),
+        spawn_fragments(
+            fragments.as_slice(),
             &mut materials,
             &mut meshes_assets,
             &mut commands,
-            mesh.compute_aabb().unwrap().center,
+            mesh.compute_aabb().unwrap().center.into(),
         );
     }
 }
@@ -321,8 +317,6 @@ fn deterministic_slice_object(
 
         for (entity, transform, _gtrsfrm, mesh_handle) in q_sliceables.iter() {
             let mesh = meshes_assets.get(mesh_handle).unwrap();
-            let slice_center = Vec3A::from(transform.translation);
-
             let aabb = mesh.compute_aabb().unwrap();
 
             let plane = Plane::new(aabb.center, Vec3::Y.into()).into();
@@ -330,34 +324,33 @@ fn deterministic_slice_object(
 
             commands.entity(entity).despawn_recursive();
 
-            let meshes = slice_bevy_mesh(plane, &mesh);
-
-            info!("Created {} meshes ", meshes.len());
-            spawn_fragment(
-                meshes,
-                &mut materials,
-                &mut meshes_assets,
-                &mut commands,
-                slice_center,
-            );
+            if let Some(meshes) = slice_bevy_mesh(plane, &mesh) {
+                info!("Created {} meshes ", meshes.len());
+                spawn_fragments(
+                    &meshes,
+                    &mut materials,
+                    &mut meshes_assets,
+                    &mut commands,
+                    transform.translation,
+                );
+            }
         }
     }
 }
 
-fn spawn_fragment(
-    meshes: Vec<Mesh>,
+fn spawn_fragments(
+    mesh_fragments: &[Mesh],
     materials: &mut ResMut<Assets<StandardMaterial>>,
     meshes_assets: &mut ResMut<Assets<Mesh>>,
     commands: &mut Commands,
-    pos: Vec3A,
+    sliced_mesh_pos: Vec3,
 ) {
-    //Spawn the fragment for each mesh
-    for mesh in meshes {
+    for mesh in mesh_fragments {
         let mesh_handle = meshes_assets.add(mesh.clone());
         commands.spawn((
             PbrBundle {
                 mesh: mesh_handle.clone(),
-                transform: Transform::from_xyz(pos.x, pos.y, pos.z),
+                transform: Transform::from_translation(sliced_mesh_pos),
                 material: materials.add(Color::srgb_u8(124, 144, 255)),
                 ..default()
             },

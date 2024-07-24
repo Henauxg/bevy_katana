@@ -15,19 +15,17 @@ use ghx_constrained_delaunay::{
     types::{Edge, TriangleVertexIndex, VertexId},
 };
 
-pub fn slice_bevy_mesh(plane: Plane, mesh: &RenderMesh) -> Vec<RenderMesh> {
+pub fn slice_bevy_mesh(plane: Plane, mesh: &RenderMesh) -> Option<[RenderMesh; 2]> {
     let mut sliced_mesh_data = SlicedMeshData::from_bevy_render_mesh(mesh);
     let mut initial_submesh = Submesh::from_bevy_render_mesh(mesh);
 
-    let frags = match internal_slice_submesh(&mut initial_submesh, plane, &mut sliced_mesh_data) {
-        None => vec![initial_submesh], // TODO may optimize the uncut case
-        Some(frags) => frags.to_vec(), // TODO No to vec
-    };
-
-    frags
-        .iter()
-        .map(|f| f.to_bevy_render_mesh(&sliced_mesh_data))
-        .collect()
+    match internal_slice_submesh(&mut initial_submesh, plane, &mut sliced_mesh_data) {
+        None => None,
+        Some(frags) => Some([
+            frags[0].to_bevy_render_mesh(&sliced_mesh_data),
+            frags[1].to_bevy_render_mesh(&sliced_mesh_data),
+        ]),
+    }
 }
 
 pub fn slice_bevy_mesh_iterative(
