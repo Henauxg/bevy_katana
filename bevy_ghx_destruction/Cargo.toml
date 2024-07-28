@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 # Internal dependencies
-ghx_constrained_delaunay = { git = "https://github.com/Henauxg/ghx_constrained_delaunay.git", version = "0.1.0" }
+ghx_constrained_delaunay = { git = "https://github.com/Henauxg/ghx_constrained_delaunay.git", version = "0.2.0" }
 
 # External dependencies
 bevy = { version = "0.14.0", default-features = false, features = [] }

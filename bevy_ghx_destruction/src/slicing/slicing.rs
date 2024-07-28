@@ -195,7 +195,7 @@ fn triangulate_and_fill_sliced_faces(
 
     let triangulation = constrained_triangulation_from_3d_planar_vertices(
         &local_vertices,
-        plane.normal(),
+        plane.normal().into(),
         &local_edges,
         ConstrainedTriangulationConfiguration::default(),
     )?;

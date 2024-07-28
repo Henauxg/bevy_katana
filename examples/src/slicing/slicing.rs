@@ -324,7 +324,7 @@ fn deterministic_slice_object(
 
             commands.entity(entity).despawn_recursive();
 
-            if let Some(meshes) = slice_bevy_mesh(plane, &mesh) {
+            if let Some(meshes) = slice_bevy_mesh(plane, mesh) {
                 info!("Created {} meshes ", meshes.len());
                 spawn_fragments(
                     &meshes,
