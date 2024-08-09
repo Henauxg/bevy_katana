@@ -43,32 +43,8 @@ bevy_rapier3d = { version = "0.27.0", features = [
     "simd-stable",
     "debug-render-3d",
 ] }
-bevy_egui = "0.28"
 bevy-inspector-egui = "0.25"
-rand = "0.8.5"
 bevy_mod_raycast = "0.18.0"
+rand = "0.8.5"
+
 # bevy_mod_billboard = { version = "0.6.0", git = "https://github.com/kulkalkul/bevy_mod_billboard.git" }
-
-[[example]]
-name = "tetgen"
-path = "src/tetgen/tetgen.rs"
-
-[[example]]
-name = "simple_delaunay"
-path = "src/simple_delaunay/simple_delaunay.rs"
-
-[[example]]
-name = "prefracture"
-path = "src/prefracture/prefracture.rs"
-
-[[example]]
-name = "slicing"
-path = "src/slicing/slicing.rs"
-
-[[example]]
-name = "joint"
-path = "src/joint.rs"
-
-[[example]]
-name = "fracturing"
-path = "src/fracturing.rs"
