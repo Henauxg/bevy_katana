@@ -2,6 +2,7 @@ use bevy::color::{palettes::css::*, Color};
 
 pub mod ball;
 pub mod fps;
+pub mod lines;
 pub mod plugin;
 
 pub const DEFAULT_EXAMPLES_FONT_SIZE: f32 = 17.;
