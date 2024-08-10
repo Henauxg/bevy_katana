@@ -6,7 +6,7 @@ edition = "2021"
 
 [dependencies]
 # Internal dependencies
-bevy_ghx_destruction = { version = "0.1.0", path = "../bevy_ghx_destruction" }
+bevy_katana = { version = "0.1.0", path = "../bevy_katana" }
 bevy_ghx_utils = { version = "0.4.0", default-features = true }
 
 # External dependencies

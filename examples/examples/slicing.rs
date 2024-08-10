@@ -26,7 +26,7 @@ use bevy::{
     DefaultPlugins,
 };
 
-use bevy_ghx_destruction::{
+use bevy_katana::{
     slicing::slicing::{slice_bevy_mesh, slice_bevy_mesh_iterative},
     types::Plane,
 };

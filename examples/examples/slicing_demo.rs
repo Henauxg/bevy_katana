@@ -31,14 +31,14 @@ use bevy::{
     DefaultPlugins,
 };
 
-use bevy_ghx_destruction::{
-    slicing::slicing::{slice_bevy_mesh, slice_bevy_mesh_iterative},
-    types::Plane,
-};
 use bevy_ghx_utils::camera::{
     update_pan_orbit_camera, PanOrbitCameraBundle, PanOrbitSettings, PanOrbitState,
 };
 use bevy_gltf::GltfAssetLabel;
+use bevy_katana::{
+    slicing::slicing::{slice_bevy_mesh, slice_bevy_mesh_iterative},
+    types::Plane,
+};
 use bevy_mod_raycast::prelude::*;
 use bevy_rapier3d::{
     dynamics::RigidBody,

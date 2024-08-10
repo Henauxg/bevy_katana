@@ -17,7 +17,7 @@ use bevy::{
     transform::components::Transform,
     DefaultPlugins,
 };
-use bevy_ghx_destruction::slicing::slicing::slice_bevy_mesh_iterative;
+use bevy_katana::slicing::slicing::slice_bevy_mesh_iterative;
 use bevy_mod_raycast::prelude::*;
 use bevy_rapier3d::{
     dynamics::{FixedJointBuilder, ImpulseJoint, RigidBody},
