@@ -15,6 +15,7 @@ use ghx_constrained_delaunay::{
     types::{Edge, TriangleVertexIndex, VertexId},
 };
 
+/// Plane should be in local coordinates
 pub fn slice_bevy_mesh(plane: Plane, mesh: &RenderMesh) -> Option<[RenderMesh; 2]> {
     let mut sliced_mesh_data = SlicedMeshData::from_bevy_render_mesh(mesh);
     let mut initial_submesh = Submesh::from_bevy_render_mesh(mesh);

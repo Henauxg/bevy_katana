@@ -212,8 +212,8 @@ pub enum LinkType {
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Plane {
-    origin_point: Vec3A,
-    normal_vec: Vec3A,
+    pub origin_point: Vec3A,
+    pub normal_vec: Vec3A,
 }
 
 impl Plane {
