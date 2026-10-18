@@ -3,17 +3,29 @@ use std::time::Duration;
 use bevy::{
     app::{App, Startup, Update},
     asset::{AssetServer, Assets, Handle},
-    color::{palettes::css::RED, Color, LinearRgba},
+    color::{
+        palettes::css::{GREEN, RED},
+        Color, LinearRgba,
+    },
     core_pipeline::{bloom::BloomSettings, tonemapping::Tonemapping},
     hierarchy::DespawnRecursiveExt,
+    input::ButtonInput,
     math::{Dir3, Vec3, Vec3A},
-    pbr::{MaterialMeshBundle, PbrBundle, StandardMaterial},
+    pbr::{
+        wireframe::{Wireframe, WireframeColor, WireframeConfig, WireframePlugin},
+        MaterialMeshBundle, PbrBundle, StandardMaterial,
+    },
     prelude::{
         in_state, AlphaMode, AppExtStates, Camera3dBundle, Commands, Component, Condition, Entity,
-        Event, EventReader, EventWriter, GlobalTransform, IntoSystemConfigs, NextState, OnEnter,
-        Plane3d, Query, Res, ResMut, Resource, States, TransformPoint, With,
+        Event, EventReader, EventWriter, GlobalTransform, IntoSystemConfigs, KeyCode, NextState,
+        OnEnter, Plane3d, PluginGroup, Query, Res, ResMut, Resource, States, TransformPoint, With,
     },
-    render::{camera::Camera, mesh::Mesh},
+    render::{
+        camera::Camera,
+        mesh::Mesh,
+        settings::{RenderCreation, WgpuFeatures, WgpuSettings},
+        RenderPlugin,
+    },
     time::{Time, Timer, TimerMode},
     transform::components::Transform,
     utils::default,
@@ -42,10 +54,22 @@ pub const DRAGON_SPAWN_TRANSLATION: Vec3 = Vec3::new(0.0, 2., 0.0);
 fn main() {
     let mut app = App::new();
     app.add_plugins((
-        DefaultPlugins,
+        // DefaultPlugins,
+        DefaultPlugins.set(RenderPlugin {
+            render_creation: RenderCreation::Automatic(WgpuSettings {
+                features: WgpuFeatures::POLYGON_MODE_LINE,
+                ..default()
+            }),
+            ..default()
+        }),
+        WireframePlugin,
         RapierPhysicsPlugin::<NoUserData>::default(),
         TweeningPlugin,
     ));
+    app.insert_resource(WireframeConfig {
+        global: true,
+        default_color: Color::WHITE,
+    });
     app.add_event::<SliceEvent>();
 
     app.init_state::<State>();
@@ -97,8 +121,10 @@ fn all_assets_loaded(asset_server: Res<AssetServer>, assets: Res<AssetHandles>) 
     asset_server.is_loaded_with_dependencies(&assets.dragon_gltf)
 }
 
-fn continue_to_running(mut next_state: ResMut<NextState<State>>) {
-    next_state.set(State::Running);
+fn continue_to_running(mut next_state: ResMut<NextState<State>>, key: Res<ButtonInput<KeyCode>>) {
+    if key.just_pressed(KeyCode::Space) {
+        next_state.set(State::Running);
+    }
 }
 
 pub fn setup_camera(mut commands: Commands) {
@@ -364,6 +390,10 @@ fn slice_meshes(
                         // Logic
                         Sliceable,
                         // SlicedFragment::new(),
+                        Wireframe,
+                        WireframeColor {
+                            color: Color::Srgba(GREEN),
+                        },
                     ))
                     .id();
 
